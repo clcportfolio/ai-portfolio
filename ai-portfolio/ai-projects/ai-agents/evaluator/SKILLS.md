@@ -29,7 +29,7 @@ Run these mentally against each file:
 ### Imports
 - [ ] `from langchain_anthropic import ChatAnthropic` (not `from anthropic import ...`)
 - [ ] `from langchain_core.prompts import ChatPromptTemplate`
-- [ ] `from langfuse.callback import CallbackHandler`
+- [ ] `from langfuse.langchain import CallbackHandler`
 - [ ] `from dotenv import load_dotenv`
 - [ ] `load_dotenv()` called at module level
 

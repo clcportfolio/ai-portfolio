@@ -15,9 +15,12 @@ Every pattern here is what the agent must produce in output files.
 | Errors are appended to `state["errors"]`, never raised | All agent `run()` functions |
 | `validate_input` called before state is built | `pipeline.py` |
 | `sanitize_output` called before returning | `pipeline.py` |
+| `state["output"]` assigned to final agent's output key before `sanitize_output` | `pipeline.py` |
 | `max_tokens` always explicit on every LLM instantiation | All agent files |
 | No raw `anthropic` or `openai` SDK — always LangChain wrappers | All files |
-| Trace name format: `"{project_name}/{agent_name}"` | All Langfuse handlers |
+| `structured_llm` MUST be composed into a chain — never call `.invoke()` directly on it | All agents using structured output |
+| `CallbackHandler()` takes NO constructor args — Langfuse v4 reads keys from env vars | All `_get_handler()` functions |
+| `load_dotenv(find_dotenv(), override=True)` — searches parent dirs, overrides stale env | All agent and pipeline files |
 
 ---
 
@@ -34,10 +37,10 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langfuse.callback import CallbackHandler
-from dotenv import load_dotenv
+from langfuse.langchain import CallbackHandler
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv(), override=True)  # searches parent dirs; override=True forces .env values
 
 PROJECT_NAME = "{project_name}"
 AGENT_NAME   = "{agent_name}"
@@ -52,12 +55,9 @@ def _get_llm() -> ChatAnthropic:
 
 
 def _get_handler() -> CallbackHandler:
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"{PROJECT_NAME}/{AGENT_NAME}",
-    )
+    # Langfuse v4: reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST from env vars
+    # Do NOT pass public_key, secret_key, host, or trace_name as constructor args — they are ignored or error
+    return CallbackHandler()
 
 
 def run(state: dict) -> dict:
@@ -201,6 +201,7 @@ def run(user_input: dict) -> dict:
     state     = agent_one.run(state)
     state     = agent_two.run(state)
     state     = agent_three.run(state)
+    state["output"] = state.get("agent_three_output")  # surface final output for sanitize_output + app.py
     state     = sanitize_output(state)
     return state
 
@@ -242,9 +243,12 @@ from . import agent_three
 
 | Mistake | Fix |
 |---|---|
-| `llm.invoke(prompt_str)` | Use `chain = prompt \| llm \| parser` |
-| `handler = CallbackHandler()` with no keys | Pass all three env vars explicitly |
+| `structured_llm.invoke({"key": val})` | WRONG — `structured_llm` is not a runnable alone. Always: `chain = prompt \| structured_llm` then `chain.invoke({"key": val})` |
+| `llm.invoke(prompt_str)` | Use `chain = prompt \| llm \| parser; chain.invoke({...})` |
+| `CallbackHandler(public_key=..., secret_key=..., host=..., trace_name=...)` | Langfuse v4: use `CallbackHandler()` only — keys come from env vars |
+| `load_dotenv()` | Use `load_dotenv(find_dotenv(), override=True)` — finds .env in parent dirs, overrides stale shell env |
 | `state["errors"] = [str(e)]` | `state["errors"].append(str(e))` — never overwrite |
+| `state["output"]` never set | Must assign `state["output"] = state.get("final_agent_output")` before `sanitize_output()` |
 | `temperature` omitted | Always pass `temperature=` explicitly |
 | `max_tokens` omitted | Always pass `max_tokens=` explicitly |
 | Importing `anthropic` directly | Import from `langchain_anthropic` |

@@ -27,10 +27,10 @@ from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, Field
 
-load_dotenv()
+load_dotenv(override=True)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -62,12 +62,8 @@ def _get_llm(temperature: float = 0.3) -> ChatAnthropic:
 
 
 def _get_handler(step: str) -> CallbackHandler:
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"build-pipeline/orchestrator/{step}",
-    )
+    # Langfuse v4: credentials read from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars
+    return CallbackHandler()
 
 
 def _skills_md() -> str:

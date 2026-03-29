@@ -232,3 +232,83 @@ row[x] = (row[src_lo] * (1 - alpha) + row[src_hi] * alpha).astype(np.uint8)
 `max_shift` is now kept as a float throughout — no rounding until the final uint8 cast.
 Module docstring updated to describe the interpolated algorithm.
 Result: smooth curved surfaces (horse cheek, forehead) with no visible depth banding.
+
+---
+
+## Ask 11 — Add Clinical Trial Eligibility Screener to CLAUDE.md + build project
+
+**Outcome:** Added project spec to CLAUDE.md Suggested Projects section as #3, then
+ran the full build loop and debugged the output to a fully working, end-to-end pipeline.
+
+### CLAUDE.md update
+Added `clinical-trial-eligibility-screener` to Suggested Projects with full spec:
+pipeline agents, Streamlit UI requirements, stretch goal (ClinicalTrials.gov API dropdown),
+and M3 alignment rationale.
+
+### Infrastructure fixes (before build)
+Two Langfuse v4 breaking changes required fixes across all 6 build agents:
+1. `from langfuse.callback import CallbackHandler` → `from langfuse.langchain import CallbackHandler`
+2. `CallbackHandler(public_key=..., secret_key=..., host=..., trace_name=...)` → `CallbackHandler()`
+   (v4 reads all credentials from env vars; constructor no longer accepts secret_key/host/trace_name)
+
+Also fixed `load_dotenv()` → `load_dotenv(override=True)` in `orchestrator.py` to prevent
+empty shell env vars from blocking `.env` values from loading.
+
+### Build loop result
+Orchestrator ran 3 iterations. Evaluator scored 6/10 each time (status: `incomplete`).
+Build proceeded — guardrail_engineer, security_specialist, and tech_writer all completed.
+
+Consistent evaluator feedback across iterations:
+- Missing `chain = prompt | structured_llm` (agents called `structured_llm.invoke(dict)` directly — invalid)
+- Wrong field access in `evaluation_agent.py`: `.get("criteria", [])` vs actual `inclusion_criteria`/`exclusion_criteria`
+- Missing `state["output"]` assignment before `sanitize_output()`
+- `_get_handler()` in project agents still used Langfuse v3 constructor (software_engineer copied old template)
+- App verdict card used wrong field names from `VerdictResult`
+
+### Post-build manual fixes
+All issues from the build log corrected manually:
+
+| File | Fix |
+|---|---|
+| All 3 agents | `_get_handler()` → `CallbackHandler()` (Langfuse v4) |
+| All 3 agents + pipeline + guardrails | `load_dotenv(find_dotenv(), override=True)` to search upward for `.env` |
+| `criteria_agent.py` | `chain = prompt \| structured_llm` before `.invoke()` |
+| `evaluation_agent.py` | Same chain fix + correct field access (`inclusion_criteria`/`exclusion_criteria`) |
+| `verdict_agent.py` | Same chain fix |
+| `pipeline.py` | Added `state["output"] = state.get("verdict_agent_output")` before `sanitize_output()` |
+| `pipeline.py` | Added `--dry-run` flag (Terminal Runability Standard) |
+| `app.py` | Fixed verdict card to use `eligibility_status`, `confidence_score`, `summary`, `key_factors`, `next_steps` |
+| `app.py` | Fixed per-criterion display to use `criterion_text`, `meets_criterion`, `reasoning`, `relevant_patient_info` |
+| All 3 agents + guardrails | Added `if __name__ == "__main__"` blocks (Terminal Runability Standard) |
+
+### Verified working
+- `python pipeline.py --dry-run` → passes with no API calls
+- `python guardrails.py` → all 4 test cases pass; PHI stub fires correctly
+- `python pipeline.py` → full run returns **ELIGIBLE, 95% confidence**, zero errors, all 3 agents fire
+
+### Project structure
+```
+projects/clinical-trial-eligibility-screener/
+├── pipeline.py              ← 3-agent orchestration + --dry-run flag
+├── guardrails.py            ← validate_input, sanitize_output, rate_limit_check + PHI stub
+├── app.py                   ← Streamlit UI: two inputs, verdict card, per-criterion expander
+├── agents/
+│   ├── __init__.py
+│   ├── criteria_agent.py    ← extracts inclusion/exclusion criteria (CriteriaExtractionResult)
+│   ├── evaluation_agent.py  ← evaluates patient per criterion (EvaluationResult)
+│   └── verdict_agent.py     ← synthesizes final verdict (VerdictResult: ELIGIBLE/INELIGIBLE/NEEDS_REVIEW)
+├── requirements.txt
+├── .env.example             ← notes to create own Langfuse project for this screener
+├── build_log.md
+├── README.md
+└── docs/
+    ├── overview_nontechnical.md
+    ├── overview_technical.md
+    └── build_walkthrough.md
+```
+
+### Root cause note (for future build agent improvement)
+The software_engineer agent consistently generated `structured_llm.invoke(dict)` instead of
+`chain = prompt | structured_llm; chain.invoke(dict)`. This is a SKILLS.md gap — the
+structured output snippet shows the chain pattern but the agent's prompt generation doesn't
+enforce it. Consider adding an explicit checklist item to software_engineer's SKILLS.md.

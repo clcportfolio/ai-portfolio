@@ -403,6 +403,32 @@ public API), and generates a plain-English safety report for a parent.
 - Stepwise: build `apps/image-preprocessor/` first (pure algorithm), then the full project
 - Demonstrates: vision, tool use, external API integration, consumer-facing output
 
+### 3. Clinical Trial Eligibility Screener (healthcare/agentic — build third)
+Location: `projects/clinical-trial-eligibility-screener/`
+
+A coordinator pastes a trial's inclusion/exclusion criteria into one text box and a
+patient summary into another. The pipeline evaluates the patient against every criterion
+and returns a plain-English eligibility verdict with explicit reasoning per criterion.
+
+Pipeline agents:
+- `criteria_agent` — extracts and structures individual criteria from the raw trial text
+- `evaluation_agent` — evaluates the patient summary against each criterion one at a time
+- `verdict_agent` — synthesizes evaluations into a final verdict with plain-English reasoning
+
+Streamlit UI:
+- Two text area inputs: "Trial Criteria" and "Patient Summary"
+- A "Run Eligibility Check" button
+- A verdict card showing Eligible / Likely Ineligible / Needs Review with a color indicator
+- An expander showing the per-criterion evaluation breakdown
+- A sidebar with project description, tech stack, and GitHub link
+
+Stretch goal (do not build now, note in `docs/`): Option C — user selects from a dropdown
+of preloaded ClinicalTrials.gov trials via their free public API instead of pasting
+criteria manually.
+
+- Demonstrates: multi-step reasoning, structured output, healthcare context, agentic decomposition
+- Direct analog to M3's clinical research business (Wake Research, trial coordination workflows)
+
 ### Stepwise build pattern (for complex projects)
 When a project has a non-AI algorithmic component, build it in `apps/` first and
 validate it standalone before wrapping it in the full project pipeline.

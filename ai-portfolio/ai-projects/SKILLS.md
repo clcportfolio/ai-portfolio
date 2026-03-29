@@ -270,23 +270,22 @@ response = conversation.invoke({"input": "Tell me about the patient's history."}
 ## 9. Langfuse Observability
 
 ```python
-from langfuse.callback import CallbackHandler
-from dotenv import load_dotenv
-import os
+from langfuse.langchain import CallbackHandler
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+# find_dotenv() searches parent directories — works from any project subdirectory
+# override=True forces .env values even if the shell has stale empty vars
+load_dotenv(find_dotenv(), override=True)
 
-def get_langfuse_handler(trace_name: str) -> CallbackHandler:
-    """Return a Langfuse callback handler for a specific agent trace."""
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=trace_name,
-    )
+def _get_handler() -> CallbackHandler:
+    """Return a Langfuse v4 callback handler.
+    Langfuse v4 reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST from env vars.
+    Do NOT pass these as constructor args — they will raise or be silently ignored.
+    """
+    return CallbackHandler()
 
 # Usage — pass handler to every .invoke() call
-handler = get_langfuse_handler("clinical-intake-router/extraction_agent")
+handler = _get_handler()
 result = chain.invoke({"input": text}, config={"callbacks": [handler]})
 ```
 
@@ -341,7 +340,7 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -18,7 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.output_parsers import StrOutputParser
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 
 from .prompts import GUARDRAILS_PROMPT
 
@@ -36,12 +36,8 @@ def _get_llm() -> ChatAnthropic:
 
 
 def _get_handler(project_name: str) -> CallbackHandler:
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"{project_name}/guardrail_engineer",
-    )
+    # Langfuse v4: credentials read from env vars
+    return CallbackHandler()
 
 
 def _load_skills() -> str:

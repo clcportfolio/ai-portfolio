@@ -15,7 +15,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, Field
 
 from .prompts import EVAL_PROMPT
@@ -51,12 +51,8 @@ def _get_llm() -> ChatAnthropic:
 
 
 def _get_handler(project_name: str) -> CallbackHandler:
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"{project_name}/evaluator",
-    )
+    # Langfuse v4: credentials read from env vars
+    return CallbackHandler()
 
 
 def _format_files(generated_files: dict[str, str]) -> str:
@@ -169,7 +165,7 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -180,12 +176,8 @@ def _get_llm():
     return ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=512, temperature=0)
 
 def _get_handler():
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"{PROJECT_NAME}/{AGENT_NAME}",
-    )
+    # Langfuse v4: credentials read from env vars
+    return CallbackHandler()
 
 def run(state: dict) -> dict:
     state["pipeline_step"] += 1
