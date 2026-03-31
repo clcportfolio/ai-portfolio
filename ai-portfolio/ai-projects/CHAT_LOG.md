@@ -312,3 +312,271 @@ The software_engineer agent consistently generated `structured_llm.invoke(dict)`
 `chain = prompt | structured_llm; chain.invoke(dict)`. This is a SKILLS.md gap — the
 structured output snippet shows the chain pattern but the agent's prompt generation doesn't
 enforce it. Consider adding an explicit checklist item to software_engineer's SKILLS.md.
+
+---
+
+## Ask 12 — Build projects/clinical-intake-router/
+
+**Outcome:** Built the full `projects/clinical-intake-router/` project — a 3-agent
+sequential pipeline that reads clinical intake forms, extracts structured fields,
+classifies urgency and department, and generates plain-English routing instructions
+for healthcare staff.
+
+### Confirmation
+`clinical-intake-router` spec was already present in `CLAUDE.md` as project #1 (lines
+392–428) from a prior session. No update required.
+
+### Build method
+Direct construction by Claude Code (no orchestrator LLM retry loop). All conventions
+from `CLAUDE.md` followed: LCEL chain pattern, Langfuse v4, Pydantic structured output,
+shared state dict, guardrails middleware, `__main__` blocks on every `.py` file.
+
+### Project structure
+```
+projects/clinical-intake-router/
+├── pipeline.py              ← 3-agent orchestration + --dry-run flag
+├── guardrails.py            ← validate_input, sanitize_output (PHI stub), rate_limit_check
+├── app.py                   ← Streamlit UI: text/PDF input, routing card, 2 agent expanders
+├── agents/
+│   ├── __init__.py
+│   ├── extraction_agent.py    ← ExtractedFields Pydantic model, temp=0
+│   ├── classification_agent.py ← ClassificationResult + UrgencyLevel Enum, temp=0
+│   └── routing_agent.py       ← RoutingResult, temp=0.3 (prose output)
+├── requirements.txt
+├── .env.example
+├── build_log.md
+├── README.md
+└── docs/
+    ├── overview_nontechnical.md
+    ├── overview_technical.md
+    └── build_walkthrough.md
+```
+
+### Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| Free-text `department` field (not Enum) | Clinical routing is open-domain; Enum creates false precision |
+| Temperature 0 for extraction + classification | Determinism matters for clinical decisions |
+| Temperature 0.3 for routing | Routing summary is staff-facing prose — mechanical output is a UX problem |
+| 8,000 char input limit | Intake forms with full PMH + meds exceed 4,000 chars |
+| PHI stub in every project | Signals production/compliance instincts to healthcare interviewers |
+| Lazy EHR stretch goal | Documented in build_walkthrough.md; integration point identified but not built |
+
+### Verified working
+- `python pipeline.py --dry-run` → passes, no API keys needed
+- `python guardrails.py` → 5/5 test cases pass; PHI stub fires correctly; HTML strip confirmed
+
+---
+
+## Ask 13 — Rename urgency level Emergency → Emergent
+
+**Problem:** The routing card header renders `{urgency_level} — {department}`. Using "Emergency"
+for both the top urgency level and the Emergency department produced ambiguous output:
+- "Urgent — Emergency" (patient going to Emergency dept at Urgent priority — is that one concept or two?)
+- "Emergency — Emergency" (redundant and confusing)
+
+**Fix:** Renamed `UrgencyLevel.EMERGENCY = "Emergency"` → `UrgencyLevel.EMERGENT = "Emergent"`.
+"Emergent" is the correct clinical triage term — already used by nurses and coordinators —
+and cleanly separates the urgency namespace from the department namespace.
+
+**Files changed:**
+| File | Change |
+|---|---|
+| `agents/classification_agent.py` | Enum value + system prompt: `Emergency` → `Emergent` |
+| `agents/routing_agent.py` | Field description + `__main__` test hardcoded value |
+| `app.py` | `urgency_colors` and `urgency_emoji` dict keys |
+| `docs/overview_technical.md` | Enum schema docs + new "Why Emergent" design note |
+| `docs/build_walkthrough.md` | New paragraph explaining the naming decision |
+| `docs/overview_nontechnical.md` | Added plain-English note for non-technical readers |
+| `CLAUDE.md` | Suggested Projects urgency level list updated |
+
+---
+
+## Ask 14 — Add explicit labels to routing card in app.py
+
+**Problem:** Routing card header showed `🔴 Emergent — Emergency` with no labels. A reader
+unfamiliar with the format had to infer which token was urgency and which was department.
+
+**Fix:** Replaced the single `<h3>` header with a labeled flex row. Each field now has a
+small-caps uppercase label ("URGENCY", "DEPARTMENT", "EXPECTED RESPONSE") above its value.
+The summary text is separated by a faint divider line below the fields.
+
+**File changed:** `app.py` — routing card HTML block only.
+
+---
+
+## Ask 15 — Simplify Langfuse run_name to agent name only
+
+**Problem:** Traces were named `"clinical-intake-router/extraction_agent"` etc. — redundant
+since the Langfuse project is already called `clinical-intake-router`.
+
+**Fix:** Stripped the project prefix from `run_name` in all three agents.
+Also updated `CLAUDE.md` observability convention so future projects don't repeat the pattern,
+and updated `docs/overview_technical.md` to reflect the corrected trace names.
+
+**Files changed:** `agents/extraction_agent.py`, `agents/classification_agent.py`,
+`agents/routing_agent.py`, `CLAUDE.md`, `docs/overview_technical.md`.
+
+---
+
+## Ask 16 — Group all 3 agent LLM calls under one Langfuse trace per pipeline run
+
+**Problem:** Each agent created its own independent Langfuse trace, so one form submission
+produced 3 disconnected traces. No way to see a full pipeline run in one place.
+
+**Fix:** Pipeline creates a root trace at the start of `run()` and stores `trace.id` in
+`state["langfuse_trace_id"]`. Each agent's `_get_handler()` now accepts an optional
+`trace_id` and passes it to `CallbackHandler(trace_id=...)`, making its LLM call a child
+span of the root trace. Pipeline updates the trace at the end with urgency level, department,
+and error metadata.
+
+Fallback: when `trace_id` is None (agent run standalone via `__main__`), `_get_handler()`
+falls back to `CallbackHandler()` and creates its own trace — solo agent runs remain observable.
+
+**Files changed:** `pipeline.py`, all 3 agent files, `CLAUDE.md` observability convention,
+`docs/overview_technical.md`.
+
+**Verified:** `python pipeline.py --dry-run` — `langfuse_trace_id` key present in state.
+
+---
+
+## Ask 17 — Fix Langfuse still showing 3 traces; remove silent try/except from trace creation
+
+**Problem (reported):** Still seeing 3 separate Langfuse traces per pipeline run instead
+of 1. User also noted that CLAUDE.md did not document the try/except pattern that was
+added around trace creation.
+
+**Root cause:** The broad `try/except Exception` around `Langfuse().trace()` in
+`pipeline.py` was silently swallowing any initialization error, leaving
+`state["langfuse_trace_id"]` as `None`. Each agent then hit the fallback
+(`CallbackHandler()`) and created its own independent trace.
+
+**Fix:**
+- Removed try/except from trace creation — if Langfuse can't create the root trace,
+  the error now surfaces rather than being hidden
+- `trace.update()` at pipeline end remains wrapped (it is metadata-only and must not
+  break the return value)
+- Updated `CLAUDE.md` observability convention to explicitly document: trace creation
+  must NOT be wrapped in try/except; only `trace.update()` may be
+- Updated `docs/overview_technical.md` to clarify the only intended fallback path
+
+**Files changed:** `pipeline.py`, `CLAUDE.md`, `docs/overview_technical.md`.
+
+---
+
+## Ask 18 — Fix single-trace grouping using correct Langfuse v4 API
+
+**Problem:** User confirmed 3 traces still appearing. `Langfuse().trace()` (raw SDK client)
+and `CallbackHandler()` (LangChain integration) use different initialization paths in v4.
+The raw client was failing silently (removed try/except in Ask 17 revealed the error).
+User also noted this was working in their OpenAI projects — those used the `@observe`
+decorator, not `Langfuse().trace()` directly.
+
+**Root cause confirmed:** Langfuse v4 removed `langfuse.decorators` module, renamed APIs,
+and `CallbackHandler` no longer accepts `trace_id=` as a string — it accepts
+`trace_context=TraceContext(trace_id, parent_span_id)`. The `langfuse_context` object
+from v2/v3 also does not exist in v4.
+
+**Correct v4 pattern (discovered by inspecting installed package):**
+```python
+from langfuse import observe, get_client
+from langfuse.langchain import CallbackHandler
+from langfuse.types import TraceContext  # TypedDict: {trace_id, parent_span_id}
+
+@observe(name="intake_route")
+def run(...):
+    lf = get_client()
+    handler = CallbackHandler(trace_context=TraceContext(
+        trace_id=lf.get_current_trace_id(),
+        parent_span_id=lf.get_current_observation_id(),
+    ))
+    state["langfuse_handler"] = handler
+    # agents read: state.get("langfuse_handler") or CallbackHandler()
+```
+
+**Files changed:** `pipeline.py` (full rewrite), `requirements.txt` (langfuse>=4.0.0),
+all 3 agent files (unchanged logic, already correct from Ask 16), `CLAUDE.md`, `docs/overview_technical.md`.
+
+**Verified:** `python pipeline.py --dry-run` passes with correct state keys.
+
+---
+
+## Ask 19 — Fix trace list-view name showing last agent's run_name
+
+**Problem:** Trace list in Langfuse showed "routing_agent" or "classification_agent" as
+the trace name (whichever agent ran last), not a meaningful pipeline name. The hierarchy
+inside the trace was correct — `intake_route` → agent spans — but the top-level Name
+column in the list was wrong.
+
+**Root cause:** Langfuse v4 reads `LangfuseOtelSpanAttributes.TRACE_NAME`
+(`langfuse.trace.name`) from OTel span attributes to set the trace display name. The
+`CallbackHandler` was writing this attribute with each agent's `run_name`, and whichever
+agent ran last won. `@observe(name="intake_route")` sets the SPAN name, not this attribute.
+
+**Fix:** Set `langfuse.trace.name = "clinical-intake-router"` on the OTel span explicitly
+at the top of `run()`, before any `CallbackHandler` executes. This pins the trace name
+regardless of agent order or failures.
+
+```python
+otel_trace.get_current_span().set_attribute(
+    LangfuseOtelSpanAttributes.TRACE_NAME, "clinical-intake-router"
+)
+```
+
+`@observe(name="intake_route")` is kept — it remains the span name visible in the
+trace hierarchy (the step below the trace root), which the user confirmed they liked.
+
+**Resulting structure:**
+```
+clinical-intake-router   ← trace list name (TRACE_NAME attribute)
+  └── intake_route       ← @observe span (trace detail hierarchy)
+        └── extraction_agent
+        └── classification_agent
+        └── routing_agent
+```
+
+**Files changed:** `pipeline.py`, `CLAUDE.md`, `docs/overview_technical.md`.
+**Verified:** `python pipeline.py --dry-run` passes.
+
+---
+
+## Ask 20 — Fix trace name: set_attribute insufficient; switch to propagate_attributes
+
+**Problem:** `set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, ...)` on a single span
+did not hold — the trace list name was still showing an agent name (not always the last
+one, making the "last agent wins" theory wrong). The CallbackHandler writes
+`langfuse.trace.name` to its own child spans; whichever child span Langfuse processes
+last for naming purposes wins.
+
+**Root cause clarified via `propagate_attributes` docstring:**
+`propagate_attributes(trace_name=...)` sets the attribute on the current span AND
+propagates it to ALL new child spans created within the context. `set_attribute` only
+sets it on one span; subsequent CallbackHandler child spans are unaffected and overwrite.
+
+**Fix:** Wrap the entire pipeline body (from handler creation through routing) in
+`with propagate_attributes(trace_name="clinical-intake-router", user_id=user_id)`.
+Every span the CallbackHandler creates inside that context inherits `trace_name`,
+so no agent can overwrite the display name.
+
+Also removed the `otel_trace` / `LangfuseOtelSpanAttributes` imports that were added
+for the previous (failed) approach.
+
+**Files changed:** `pipeline.py`, `CLAUDE.md`.
+**Verified:** `python pipeline.py --dry-run` passes.
+
+---
+
+## Ask 19 — Rename Langfuse trace from "intake_route" to "clinical-intake-router"
+
+**Problem:** Trace name appeared random/non-descriptive. Investigated `@observe` source
+in v4 — it sets the root OTel span name, which Langfuse uses as the trace name. The
+previous name `"intake_route"` was unclear; if it wasn't being picked up, traces fell
+back to a generated identifier.
+
+**Fix:** `@observe(name="intake_route")` → `@observe(name="clinical-intake-router")`.
+Naming convention going forward:
+- Full pipeline trace: `"clinical-intake-router"` (matches project name, unambiguous)
+- Standalone agent runs: trace named by `run_name` on `chain.invoke` (e.g. `"extraction_agent"`)
+
+**Files changed:** `pipeline.py`, `docs/overview_technical.md`.
