@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "/Users/clculver/Documents/repos/ai-portfolio/ai-projects/projects/clinical-intake-router/.venv/bin/pip", line 5, in <module>
-    from pip._internal.cli.main import main
-  File "/Users/clculver/Documents/repos/ai-portfolio/ai-projects/projects/clinical-intake-router/.venv/lib/python3.12/site-packages/pip/_internal/__init__.py", line 3, in <module>
-    from pip._internal.utils import _log
-ImportError: cannot import name '_log' from 'pip._internal.utils' (unknown location)
