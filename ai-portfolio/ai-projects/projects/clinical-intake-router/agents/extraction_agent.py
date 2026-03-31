@@ -24,7 +24,13 @@ Extract every available field from the text. If a field is not present, use null
 Do not infer or guess values not explicitly stated. Extract exactly what is written.
 
 Be thorough — chief complaint and symptoms are always required. Patient name is required.
-All other fields are optional but should be captured if present.""",
+All other fields are optional but should be captured if present.
+
+NAME NORMALIZATION — this is mandatory:
+Intake forms often list names in clinical formats such as "Last, First Middle",
+"LAST, FIRST", or "Smith, John R." — always normalize patient_name to
+"First Last" order (e.g. "John Smith"). Drop middle initials/names unless they
+are the only given name available. If only a last name is present, keep it as-is.""",
     ),
     (
         "human",
@@ -36,7 +42,13 @@ All other fields are optional but should be captured if present.""",
 
 
 class ExtractedFields(BaseModel):
-    patient_name: str = Field(description="Full name of the patient")
+    patient_name: str = Field(
+        description=(
+            "Full name of the patient, normalized to 'First Last' order. "
+            "If the form lists the name as 'Last, First' or 'LAST, FIRST MIDDLE', "
+            "reorder it so the given name comes first (e.g. 'Marsh, Ruth A.' → 'Ruth Marsh')."
+        )
+    )
     age: Optional[int] = Field(description="Patient age in years", default=None)
     date_of_birth: Optional[str] = Field(description="Date of birth (as written)", default=None)
     chief_complaint: str = Field(description="Primary reason for the visit or chief complaint")

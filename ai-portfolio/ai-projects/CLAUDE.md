@@ -258,7 +258,30 @@ state = {
 ### Observability (Langfuse)
 - Every LLM call gets a `CallbackHandler` from `langfuse`
 - Pass handler to every `.invoke()` call
-- Tag traces: `trace_name="[project-name]/[agent-name]"`
+- Langfuse v4 API (langfuse>=4.0.0):
+  - `observe`, `get_client` import from `langfuse` directly — `langfuse.decorators` does not exist
+  - `CallbackHandler` accepts `trace_context=TraceContext(trace_id, parent_span_id)` — not `trace_id=` directly
+  - `langfuse_context` does not exist — use `get_client()` inside an `@observe` context instead
+- Decorate `pipeline.run()` with `@observe(name="intake_route")` — this creates the root span visible in the trace hierarchy
+- Wrap the entire pipeline body in `propagate_attributes(trace_name="[project-name]", user_id=user_id)` — this pins the trace display name on the current span AND all child spans (including CallbackHandler spans), so no agent's `run_name` can overwrite it:
+  ```python
+  with propagate_attributes(trace_name="clinical-intake-router", user_id=user_id):
+      # ... all agent calls go here ...
+  ```
+  `set_attribute(TRACE_NAME, ...)` on a single span is NOT sufficient — CallbackHandler writes to its own child spans and the last one written wins.
+- Then get a scoped handler once and store it in state:
+  ```python
+  lf = get_client()
+  state["langfuse_handler"] = CallbackHandler(
+      trace_context=TraceContext(
+          trace_id=lf.get_current_trace_id(),
+          parent_span_id=lf.get_current_observation_id(),
+      )
+  )
+  ```
+- Each agent reads `state.get("langfuse_handler") or CallbackHandler()` — fall back to standalone only when running outside the pipeline (e.g. `__main__`)
+- Tag each span: `run_name="[agent-name]"` in `chain.invoke(config=...)`
+- Update trace output at pipeline end with `lf.set_current_trace_io(output={...})` — MAY be wrapped in try/except (metadata only, must never break the return)
 - Log: prompt, response, latency, token count, eval scores where available
 - Non-negotiable — observable systems are a direct signal to M3
 
@@ -276,6 +299,21 @@ state = {
 - S3 for file storage, Lambda for lightweight endpoints
 - Cost alarm set at $30 — never exceed free tier without explicit confirmation
 - Use `boto3` for integrations
+
+### Structured Storage (Supabase PostgreSQL)
+- Use Supabase as the standard for structured output data (pipeline results, metadata)
+- S3 holds raw files; Supabase holds structured results — keep them separate
+- Connection: always use the **Session pooler** URI from the Supabase Connect modal
+  (not the Direct or Transaction pooler). Session pooler works on IPv4 networks, which
+  covers both local dev and Streamlit Community Cloud. Direct connection requires IPv6.
+- Use `psycopg2-binary` for the DB driver
+- SHA-256 hash file bytes at upload time; store in DB as the natural dedup key
+- Standard table for intake-style projects:
+  ```
+  file_hash, s3_key, s3_bucket, original_filename, file_size_bytes,
+  [agent output columns as JSONB], submitted_at
+  ```
+- Add `SUPABASE_DB_URI=` to `.env.example` for every project that uses it
 
 ### Virtual Environments
 - Every project in `projects/` gets its own `.venv` — never shared across projects
@@ -310,6 +348,62 @@ state = {
   python-dotenv>=1.0.0
   pydantic>=2.0.0
   ```
+
+---
+
+### RBAC (Role-Based Access Control)
+Healthcare and multi-user projects use a `RoleConfig` Pydantic model as the single
+source of truth for all role-specific settings. This keeps UI rendering, DB query
+restrictions, and guardrail enforcement consistent without duplicating logic.
+
+```python
+class RoleConfig(BaseModel):
+    role: str
+    display_name: str
+    allowed_columns: Optional[list[str]]  # None = unrestricted
+    can_see_classification: bool
+    can_see_full_extraction: bool
+    can_delete_documents: bool            # admin only
+    nl2sql_schema: str                    # role-scoped schema shown to NL2SQL agent
+    badge_color: str
+```
+
+Standard demo roles for healthcare projects:
+- `demo-admin` — full access + document deletion (purple badge)
+- `demo-doctor` — full clinical access, no delete (green badge)
+- `demo-reception` — routing/scheduling only, no clinical fields (orange badge)
+
+`authenticate(username, password) -> Optional[RoleConfig]` is the single auth entry
+point. All downstream role decisions read from the `RoleConfig` object — never from
+raw role strings scattered through the code.
+
+### NL2SQL Guardrail Layers
+When a project exposes natural-language database queries, use 4 independent layers.
+The key principle: deterministic checks first, LLM-dependent checks last.
+
+- **L1 — Schema restriction**: show the LLM only the columns its role is allowed to see
+- **L2 — AST validation**: parse LLM-generated SQL with `sqlglot` and check every
+  `exp.Column` reference against the allowlist; block `SELECT *` for restricted roles.
+  This is deterministic — it doesn't rely on the LLM complying with instructions.
+- **L3 — Result column strip**: after query execution, drop any restricted columns
+  that slipped through (defence against LLM non-compliance)
+- **L4 — Output keyword scan**: scan the synthesised plain-English answer for clinical
+  terms/patterns that shouldn't appear in restricted role output
+
+Use `sqlglot>=23.0.0` for AST parsing. Never rely solely on prompt instructions to
+enforce column restrictions.
+
+### Multi-Store Delete Ordering
+When deleting from both a database and a file store (S3), always delete the DB record
+first. This is the safe failure ordering:
+
+- DB fails → both intact. User can retry.
+- DB succeeds, S3 fails → orphaned S3 file (invisible to users, not a broken reference).
+
+The reverse (S3 first) leaves a DB row pointing to a deleted file — a broken reference
+that causes errors every time a user selects it and is hard to recover from.
+
+Queue any S3 failures for retry rather than silently swallowing them.
 
 ---
 
@@ -389,11 +483,32 @@ This only governs the build retry loop — it has no effect on product pipeline 
 
 ## Suggested Projects
 
-### 1. Clinical Intake Router (M3-aligned — build this first)
-User pastes or uploads a clinical intake form. Pipeline extracts key fields, classifies
-urgency, and routes to the appropriate department with a plain-English summary.
-- `extraction_agent` → `classification_agent` → `routing_agent`
-- Demonstrates: document processing, structured output, workflow automation, healthcare context
+### 1. Clinical Intake Router (M3-aligned — **BUILT**)
+Location: `projects/clinical-intake-router/`
+
+**Status: complete.** Do not rebuild. Read the existing code and docs before touching it.
+
+A staff member at a healthcare organization pastes or uploads a clinical intake form.
+The pipeline extracts key fields, classifies the urgency level, and routes the case to
+the appropriate department — returning a plain-English routing summary that a
+non-technical user can act on immediately.
+
+Pipeline agents: `extraction_agent` → `classification_agent` → `routing_agent`
+
+**What was built beyond the original spec:**
+- AWS S3 for raw file storage; Supabase PostgreSQL for structured results
+- SHA-256 dedup — files already in the database skip the pipeline
+- Two-tab Streamlit UI: Tab 1 = intake routing, Tab 2 = NL2SQL chatbot
+- RBAC with 3 roles (demo-admin, demo-doctor, demo-reception) via `RoleConfig`
+- NL2SQL agent with 4-layer guardrail (schema → AST → column strip → keyword scan)
+- Admin-only document deletion with DB-first ordering and orphaned S3 key retry queue
+- `normalize_names.py` — one-time migration script for name format normalization
+
+Stretch goal (do not build now, note in `docs/`): integrate with a real EHR system lookup
+to validate patient records against existing entries before routing.
+
+- Demonstrates: document processing, structured output, workflow automation, healthcare context,
+  RBAC, NL2SQL with guardrails, S3 + Supabase storage, admin tooling
 - Direct analog to M3's businesses: Wake Research, PracticeMatch, The Medicus Firm
 
 ### 2. Toy Safety Checker (general, visual, fun — build second)

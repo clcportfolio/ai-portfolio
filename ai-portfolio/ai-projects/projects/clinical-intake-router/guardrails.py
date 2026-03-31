@@ -1,7 +1,18 @@
 """
 Guardrails — Clinical Intake Router
 Pre/post middleware: input validation, output sanitization, PHI redaction stub,
-prompt injection detection, rate limiting stub.
+prompt injection detection, rate limiting stub, and NL2SQL output guardrail.
+
+NL2SQL output guardrail (check_nl2sql_output):
+  Layer 4 of the RBAC enforcement stack — catches restricted clinical content
+  that slips through schema restriction (L1), SQL AST validation (L2), and
+  result column stripping (L3). Scans both raw result rows and the synthesised
+  plain-English answer for restricted column names and clinical keyword patterns.
+
+  Demo scenario: reception queries "Show me the full routing summary for all
+  patients." routing_summary is an allowed column, so L1-L3 pass it. But the
+  routing agent embeds clinical language ("patient on aspirin 81mg...") in that
+  text. L4 detects the clinical keywords and redacts the answer.
 """
 
 import logging
@@ -122,6 +133,112 @@ def _phi_redaction_stub(data: dict) -> None:
             "[PHI STUB] Potential PHI detected in output. "
             "In production, route through AWS Comprehend Medical before returning to client."
         )
+
+
+# ── NL2SQL output guardrail ───────────────────────────────────────────────────
+
+# Clinical keywords that indicate protected medical information.
+# Matches medication names, dosage patterns, diagnoses, and clinical terms
+# likely to appear in routing_summary text written by the routing agent.
+_CLINICAL_PATTERNS = [
+    r"\b\d+\s*mg\b",                          # dosage (e.g. "aspirin 81mg")
+    r"\b\d+\s*mcg\b",                          # microgram dosage
+    r"\b(aspirin|metformin|lisinopril|amlodipine|warfarin|insulin|"
+    r"atorvastatin|omeprazole|levothyroxine|sertraline|fluoxetine|"
+    r"amoxicillin|ibuprofen|acetaminophen|prednisone|albuterol)\b",
+    r"\b(hypertension|diabetes|cancer|stroke|tia|seizure|"
+    r"depression|anxiety|asthma|copd|atrial fibrillation|"
+    r"heart failure|myocardial infarction|pneumonia|sepsis)\b",
+    r"\baller(gy|gies|gic)\s+to\b",           # "allergic to X"
+    r"\bmedical\s+histor(y|ies)\b",
+    r"\bcurrent\s+medication",
+    r"\bprescri(bed|ption)\b",
+    r"\bpast\s+medical",
+    r"\bpmh\b",                                # medical abbreviation
+]
+_CLINICAL_RE = re.compile("|".join(_CLINICAL_PATTERNS), re.IGNORECASE)
+
+# Column names that are always restricted for non-doctor roles.
+# Used to catch any row keys that slipped through earlier layers.
+_ALWAYS_RESTRICTED_COLUMNS = {
+    "extraction_output",
+    "classification_output",
+    "file_hash",
+    "chief_complaint",
+    "s3_key",
+    "s3_bucket",
+}
+
+
+def check_nl2sql_output(result: dict, role_config) -> dict:
+    """
+    Layer 4 RBAC guardrail — scans NL2SQL results after all earlier enforcement.
+
+    Checks two things independently:
+      1. Restricted column names in raw result row keys
+      2. Clinical keyword patterns in the synthesised answer text
+
+    Either trigger causes the answer to be redacted and a guardrail flag set.
+    Rows are always stripped of restricted columns regardless.
+
+    Args:
+        result:      Dict returned by nl2sql_agent.run().
+        role_config: RoleConfig for the current user (from auth.py).
+                     If None or allowed_columns is None (doctor), returns unchanged.
+
+    Returns:
+        result dict, possibly with answer redacted and guardrail_triggered=True.
+    """
+    # Doctor role — no restrictions
+    if role_config is None or role_config.allowed_columns is None:
+        return result
+
+    allowed = set(role_config.allowed_columns)
+    guardrail_reasons = []
+
+    # ── Check 1: restricted column keys in result rows ────────────────────────
+    clean_rows = []
+    restricted_keys_found = set()
+    for row in result.get("rows", []):
+        bad_keys = {k for k in row if k not in allowed and k not in ("_duplicate",)}
+        if bad_keys:
+            restricted_keys_found.update(bad_keys)
+        clean_rows.append({k: v for k, v in row.items() if k in allowed})
+    result["rows"] = clean_rows
+
+    if restricted_keys_found:
+        guardrail_reasons.append(
+            f"result rows contained restricted columns: {', '.join(sorted(restricted_keys_found))}"
+        )
+
+    # ── Check 2: clinical keywords in synthesised answer ─────────────────────
+    answer = result.get("answer", "")
+    clinical_matches = _CLINICAL_RE.findall(answer)
+    if clinical_matches:
+        unique_matches = list(dict.fromkeys(m.lower() for m in clinical_matches if m))[:5]
+        guardrail_reasons.append(
+            f"answer contained clinical terms: {', '.join(unique_matches)}"
+        )
+
+    # ── Redact if any guardrail triggered ─────────────────────────────────────
+    if guardrail_reasons:
+        logger.warning(
+            "[GUARDRAIL L4] NL2SQL output blocked for role=%s. Reasons: %s",
+            role_config.role,
+            "; ".join(guardrail_reasons),
+        )
+        result["guardrail_triggered"] = True
+        result["guardrail_reasons"] = guardrail_reasons
+        result["answer"] = (
+            "⚠️ Response redacted: the query result contained clinical information "
+            "not accessible at your permission level. "
+            "Please contact a physician or clinical staff for detailed medical data."
+        )
+    else:
+        result["guardrail_triggered"] = False
+        result["guardrail_reasons"] = []
+
+    return result
 
 
 if __name__ == "__main__":
