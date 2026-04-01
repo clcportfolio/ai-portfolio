@@ -1,12 +1,14 @@
 """
-criteria_agent.py — Extracts and structures individual inclusion/exclusion criteria from raw clinical trial text
+criteria_agent.py — Extracts and structures individual inclusion/exclusion criteria from raw clinical trial text.
 """
 from __future__ import annotations
-import os
+
+import asyncio
+
+from dotenv import find_dotenv, load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from langfuse.langchain import CallbackHandler
-from dotenv import load_dotenv, find_dotenv
 from pydantic import BaseModel, Field
 from typing import List
 
@@ -39,14 +41,13 @@ def _get_llm() -> ChatAnthropic:
 
 
 def _get_handler() -> CallbackHandler:
-    # Langfuse v4: credentials read from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars
     return CallbackHandler()
 
 
-def run(state: dict) -> dict:
+async def run(state: dict) -> dict:
     """
-    Extracts and structures individual inclusion/exclusion criteria from raw clinical trial text.
-    Reads trial criteria text from state["input"]["trial_criteria"] and outputs structured criteria.
+    Async. Extracts and structures inclusion/exclusion criteria from raw trial text.
+    Reads state["input"]["trial_criteria"]; writes state["criteria_agent_output"].
     """
     state["pipeline_step"] += 1
     if state["pipeline_step"] > state["max_pipeline_steps"]:
@@ -61,7 +62,7 @@ def run(state: dict) -> dict:
             return state
 
         llm = _get_llm()
-        handler = _get_handler()
+        handler = state.get("langfuse_handler") or _get_handler()
         structured_llm = llm.with_structured_output(CriteriaExtractionResult)
 
         prompt = ChatPromptTemplate.from_messages([
@@ -75,16 +76,16 @@ For each criterion:
 3. Categorize it (age, diagnosis, medication, lab_values, medical_history, pregnancy, etc.)
 4. Determine if it's objectively measurable (lab values, age = measurable; "good general health" = not measurable)
 
-Be thorough - extract ALL criteria mentioned. Each bullet point or numbered item should typically be a separate criterion.
+Be thorough — extract ALL criteria mentioned. Each bullet point or numbered item is a separate criterion.
 
 Return structured output with high confidence scores for clear extractions."""),
             ("human", "Extract and structure all eligibility criteria from this clinical trial text:\n\n{trial_criteria}"),
         ])
 
         chain = prompt | structured_llm
-        result = chain.invoke(
+        result = await chain.ainvoke(
             {"trial_criteria": trial_criteria},
-            config={"callbacks": [handler]}
+            config={"callbacks": [handler], "run_name": AGENT_NAME},
         )
 
         state["criteria_agent_output"] = result.model_dump()
@@ -95,8 +96,10 @@ Return structured output with high confidence scores for clear extractions."""),
 
     return state
 
+
 if __name__ == "__main__":
     import json
+
     test_state = {
         "input": {
             "trial_criteria": (
@@ -109,7 +112,7 @@ if __name__ == "__main__":
         "max_pipeline_steps": 10,
         "errors": [],
     }
-    result = run(test_state)
+    result = asyncio.run(run(test_state))
     print("pipeline_step:", result["pipeline_step"])
     print("criteria_agent_output present:", "criteria_agent_output" in result)
     print("errors:", result["errors"])
