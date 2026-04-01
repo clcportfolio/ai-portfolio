@@ -72,7 +72,15 @@ def _get_handler(state: dict) -> CallbackHandler:
     return state.get("langfuse_handler") or CallbackHandler()
 
 
-def run(state: dict) -> dict:
+# Built once at module load — reused on every request.
+_chain = ROUTING_PROMPT | ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1024,
+    temperature=0.3,
+).with_structured_output(RoutingResult)
+
+
+async def run(state: dict) -> dict:
     """Generate plain-English routing summary. Writes to state['routing_output'] and state['output']."""
     extraction = state.get("extraction_output")
     classification = state.get("classification_output")
@@ -84,20 +92,11 @@ def run(state: dict) -> dict:
         state["pipeline_step"] += 1
         return state
 
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        temperature=0.3,
-    )
-    structured_llm = llm.with_structured_output(RoutingResult)
-    chain = ROUTING_PROMPT | structured_llm
-
     handler = _get_handler(state)
-
     red_flags = classification.get("red_flags", [])
 
     try:
-        result: RoutingResult = chain.invoke(
+        result: RoutingResult = await _chain.ainvoke(
             {
                 "patient_name": extraction.get("patient_name", "Patient") if extraction else "Patient",
                 "department": classification.get("department", "Unknown"),
@@ -120,6 +119,9 @@ def run(state: dict) -> dict:
 
 
 if __name__ == "__main__":
+    import asyncio
+    import json
+
     test_state = {
         "input": {"text": ""},
         "pipeline_step": 0,
@@ -155,9 +157,8 @@ if __name__ == "__main__":
             ],
         },
     }
-    result = run(test_state)
+    result = asyncio.run(run(test_state))
     print("pipeline_step:", result["pipeline_step"])
     print("routing_output present:", "routing_output" in result)
     print("errors:", result["errors"])
-    import json
     print(json.dumps(result.get("routing_output"), indent=2, default=str))

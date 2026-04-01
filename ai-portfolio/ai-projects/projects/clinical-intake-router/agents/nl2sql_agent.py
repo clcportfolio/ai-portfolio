@@ -98,22 +98,19 @@ Guidelines:
 ])
 
 
-# ── LLM setup ─────────────────────────────────────────────────────────────────
+# ── Chains — built once at module load, reused on every request ───────────────
 
-def _get_llm_sql():
-    return ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        temperature=0,
-        max_tokens=512,
-    )
+_sql_chain = SQL_GENERATION_PROMPT | ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    temperature=0,
+    max_tokens=512,
+).with_structured_output(SQLQuery)
 
-
-def _get_llm_answer():
-    return ChatAnthropic(
-        model="claude-haiku-4-5-20251001",
-        temperature=0.3,
-        max_tokens=1024,
-    )
+_answer_chain = ANSWER_SYNTHESIS_PROMPT | ChatAnthropic(
+    model="claude-haiku-4-5-20251001",
+    temperature=0.3,
+    max_tokens=1024,
+) | StrOutputParser()
 
 
 def _get_handler(langfuse_handler=None):
@@ -190,7 +187,7 @@ def strip_restricted_columns(rows: list[dict], allowed_columns: Optional[list[st
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def run(question: str, role_config=None, langfuse_handler=None) -> dict:
+async def run(question: str, role_config=None, langfuse_handler=None) -> dict:
     """
     Convert a natural-language question to SQL, execute it, and synthesise an answer.
     Applies all four RBAC enforcement layers.
@@ -241,9 +238,7 @@ def run(question: str, role_config=None, langfuse_handler=None) -> dict:
 
     # ── SQL generation ────────────────────────────────────────────────────────
     try:
-        llm_sql = _get_llm_sql().with_structured_output(SQLQuery)
-        sql_chain = SQL_GENERATION_PROMPT | llm_sql
-        sql_output: SQLQuery = sql_chain.invoke(
+        sql_output: SQLQuery = await _sql_chain.ainvoke(
             {"schema": schema, "question": question},
             config=invoke_config,
         )
@@ -296,9 +291,7 @@ def run(question: str, role_config=None, langfuse_handler=None) -> dict:
         import json
         rows_text = json.dumps(result["rows"][:100], indent=2, default=str)
 
-        llm_answer = _get_llm_answer()
-        answer_chain = ANSWER_SYNTHESIS_PROMPT | llm_answer | StrOutputParser()
-        result["answer"] = answer_chain.invoke(
+        result["answer"] = await _answer_chain.ainvoke(
             {
                 "question": question,
                 "sql": result["sql"],
@@ -321,11 +314,12 @@ def run(question: str, role_config=None, langfuse_handler=None) -> dict:
 
 
 if __name__ == "__main__":
+    import asyncio
     import json
 
     print("=== NL2SQL Agent Smoke Test ===\n")
 
-    # Test SQL AST validation directly
+    # Test SQL AST validation directly (deterministic — no async needed)
     from auth import ROLE_CONFIGS
     reception = ROLE_CONFIGS["demo-reception"]
     doctor = ROLE_CONFIGS["demo-doctor"]
@@ -344,7 +338,7 @@ if __name__ == "__main__":
         print(f"  {status} [{role.role}] {sql[:60]}... → valid={valid}" + (f" | {msg}" if msg else ""))
 
     print("\n--- Live query test (requires ANTHROPIC_API_KEY + SUPABASE_DB_URI) ---")
-    result = run("How many submissions are in the database?")
+    result = asyncio.run(run("How many submissions are in the database?"))
     print(f"SQL: {result['sql']}")
     print(f"Rows: {result['row_count']}")
     print(f"Answer: {result['answer']}")

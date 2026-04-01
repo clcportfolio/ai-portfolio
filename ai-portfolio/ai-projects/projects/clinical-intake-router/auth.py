@@ -135,9 +135,9 @@ ROLE_CONFIGS: dict[str, RoleConfig] = {
 # Hardcoded for demo. Replace with auth provider in production.
 
 USERS: dict[str, dict] = {
-    "demo-admin":     {"password": "demo-admin",     "role": "demo-admin"},
-    "demo-doctor":    {"password": "demo-doctor",    "role": "demo-doctor"},
-    "demo-reception": {"password": "demo-reception", "role": "demo-reception"},
+    "demo-admin":     {"password": "admin-demo",     "role": "demo-admin"},
+    "demo-doctor":    {"password": "doctor-demo",    "role": "demo-doctor"},
+    "demo-reception": {"password": "reception-demo", "role": "demo-reception"},
 }
 
 
@@ -162,21 +162,21 @@ def authenticate(username: str, password: str) -> Optional[RoleConfig]:
 
 if __name__ == "__main__":
     # Smoke test
-    rc_admin = authenticate("demo-admin", "demo-admin")
+    rc_admin = authenticate("demo-admin", "admin-demo")
     assert rc_admin is not None
     assert rc_admin.role == "demo-admin"
     assert rc_admin.allowed_columns is None
     assert rc_admin.can_see_classification is True
     assert rc_admin.can_delete_documents is True
 
-    rc = authenticate("demo-doctor", "demo-doctor")
+    rc = authenticate("demo-doctor", "doctor-demo")
     assert rc is not None
     assert rc.role == "demo-doctor"
     assert rc.allowed_columns is None
     assert rc.can_see_classification is True
     assert rc.can_delete_documents is False
 
-    rc2 = authenticate("demo-reception", "demo-reception")
+    rc2 = authenticate("demo-reception", "reception-demo")
     assert rc2 is not None
     assert rc2.role == "demo-reception"
     assert "extraction_output" not in rc2.allowed_columns

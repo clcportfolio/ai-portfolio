@@ -16,9 +16,51 @@ NL2SQL output guardrail (check_nl2sql_output):
 """
 
 import logging
+import os
 import re
+import time
 
 logger = logging.getLogger(__name__)
+
+# ── Redis rate limiter ────────────────────────────────────────────────────────
+
+_RATE_LIMIT  = 10    # max requests per window
+_RATE_WINDOW = 60    # window size in seconds
+
+_redis_client = None  # module-level singleton; initialised on first use
+
+
+def _get_redis():
+    """
+    Return a connected Redis client, or None if Redis is unavailable.
+
+    Uses lazy initialisation with a module-level singleton so the connection
+    is created once per process. Falls back to None gracefully if REDIS_URL
+    is not set or the connection fails — the rate limiter stubs out rather
+    than crashing the app.
+    """
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        return None
+
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+        client.ping()
+        _redis_client = client
+        logger.info("Redis connected: %s", redis_url.split("@")[-1])
+        return client
+    except Exception as e:
+        logger.warning("Redis unavailable — rate limiting disabled. (%s)", e)
+        return None
 
 # Prompt injection patterns — common adversarial instruction prefixes
 _INJECTION_PATTERNS = [
@@ -105,11 +147,91 @@ def sanitize_output(data: dict) -> dict:
 
 def rate_limit_check(user_id: str) -> bool:
     """
-    Stub — returns True (all requests permitted).
-    Replace with a Redis-backed counter in production.
-    E.g.: redis_client.incr(f"rate:{user_id}") <= MAX_REQUESTS_PER_MINUTE
+    Redis-backed fixed-window rate limiter.
+
+    Tracks requests globally across all users in 60-second windows.
+    Returns False when the window count exceeds _RATE_LIMIT.
+    Falls back to True (permit all) if Redis is not configured or errors.
+
+    The counter key is rl:global:<window_int> where window_int increments
+    every 60 seconds. TTL is set to 2× the window so keys expire cleanly
+    without gaps at window boundaries.
     """
-    return True
+    r = _get_redis()
+    if r is None:
+        return True  # Redis not configured — stub behaviour
+
+    window = int(time.time() / _RATE_WINDOW)
+    key = f"rl:global:{window}"
+    try:
+        count = r.incr(key)
+        if count == 1:
+            r.expire(key, _RATE_WINDOW * 2)
+        allowed = count <= _RATE_LIMIT
+        if not allowed:
+            logger.warning(
+                "[RATE LIMIT] Window %s exceeded %d requests (count=%d).",
+                window, _RATE_LIMIT, count,
+            )
+        return allowed
+    except Exception as e:
+        logger.warning("Rate limit check failed — failing open. (%s)", e)
+        return True
+
+
+def get_traffic_stats() -> dict:
+    """
+    Return current traffic level for the UI indicator without incrementing
+    the counter.
+
+    Returns a dict with:
+      available  — bool: False if Redis is not reachable
+      count      — int: requests in current window
+      limit      — int: max requests per window (_RATE_LIMIT)
+      pct        — float: count / limit (0.0–1.0+)
+      level      — str: "low" | "medium" | "high"
+      color      — str: hex colour matching the level
+    """
+    r = _get_redis()
+    if r is None:
+        return {
+            "available": False,
+            "count": 0,
+            "limit": _RATE_LIMIT,
+            "pct": 0.0,
+            "level": "unavailable",
+            "color": "#555555",
+        }
+
+    window = int(time.time() / _RATE_WINDOW)
+    key = f"rl:global:{window}"
+    try:
+        count = int(r.get(key) or 0)
+        pct = count / _RATE_LIMIT
+        if pct < 0.33:
+            level, color = "low",    "#21C354"
+        elif pct < 0.67:
+            level, color = "medium", "#FFA500"
+        else:
+            level, color = "high",   "#FF4B4B"
+        return {
+            "available": True,
+            "count": count,
+            "limit": _RATE_LIMIT,
+            "pct": pct,
+            "level": level,
+            "color": color,
+        }
+    except Exception as e:
+        logger.warning("get_traffic_stats failed. (%s)", e)
+        return {
+            "available": False,
+            "count": 0,
+            "limit": _RATE_LIMIT,
+            "pct": 0.0,
+            "level": "unavailable",
+            "color": "#555555",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -212,13 +334,19 @@ def check_nl2sql_output(result: dict, role_config) -> dict:
         )
 
     # ── Check 2: clinical keywords in synthesised answer ─────────────────────
-    answer = result.get("answer", "")
-    clinical_matches = _CLINICAL_RE.findall(answer)
-    if clinical_matches:
-        unique_matches = list(dict.fromkeys(m.lower() for m in clinical_matches if m))[:5]
-        guardrail_reasons.append(
-            f"answer contained clinical terms: {', '.join(unique_matches)}"
-        )
+    # Only fires if Check 1 also detected a violation (restricted column data
+    # in the rows). If L1–L3 all passed, the answer is synthesised from allowed
+    # columns only — clinical terms appearing in that context are legitimate
+    # (e.g. urgency_level="Emergent" may produce clinical language). Scanning
+    # the answer in isolation causes false positives for restricted roles.
+    if restricted_keys_found:
+        answer = result.get("answer", "")
+        clinical_matches = [m.group(0) for m in _CLINICAL_RE.finditer(answer)]
+        if clinical_matches:
+            unique_matches = list(dict.fromkeys(m.lower() for m in clinical_matches))[:5]
+            guardrail_reasons.append(
+                f"answer contained clinical terms: {', '.join(unique_matches)}"
+            )
 
     # ── Redact if any guardrail triggered ─────────────────────────────────────
     if guardrail_reasons:
@@ -305,5 +433,8 @@ if __name__ == "__main__":
     sanitize_output(phi_data)
     print("  (check above for PHI warning)")
 
-    print("\n=== rate_limit_check ===\n")
-    print("  rate_limit_check('user_001'):", rate_limit_check("user_001"))
+    print("\n=== rate_limit_check + get_traffic_stats ===\n")
+    r = rate_limit_check("user_001")
+    print(f"  rate_limit_check('user_001'): {r}")
+    stats = get_traffic_stats()
+    print(f"  get_traffic_stats(): {stats}")
