@@ -85,22 +85,21 @@ def _get_handler(state: dict) -> CallbackHandler:
     return state.get("langfuse_handler") or CallbackHandler()
 
 
-def run(state: dict) -> dict:
+# Built once at module load — reused on every request.
+_chain = EXTRACTION_PROMPT | ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    max_tokens=2048,
+    temperature=0,
+).with_structured_output(ExtractedFields)
+
+
+async def run(state: dict) -> dict:
     """Extract structured fields from intake form text. Writes to state['extraction_output']."""
     intake_text = state["input"].get("text", "")
-
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2048,
-        temperature=0,
-    )
-    structured_llm = llm.with_structured_output(ExtractedFields)
-    chain = EXTRACTION_PROMPT | structured_llm
-
     handler = _get_handler(state)
 
     try:
-        result: ExtractedFields = chain.invoke(
+        result: ExtractedFields = await _chain.ainvoke(
             {"intake_text": intake_text},
             config={"callbacks": [handler], "run_name": "extraction_agent"},
         )
@@ -114,6 +113,9 @@ def run(state: dict) -> dict:
 
 
 if __name__ == "__main__":
+    import asyncio
+    import json
+
     test_state = {
         "input": {
             "text": (
@@ -131,9 +133,8 @@ if __name__ == "__main__":
         "max_pipeline_steps": 10,
         "errors": [],
     }
-    result = run(test_state)
+    result = asyncio.run(run(test_state))
     print("pipeline_step:", result["pipeline_step"])
     print("extraction_output present:", "extraction_output" in result)
     print("errors:", result["errors"])
-    import json
     print(json.dumps(result.get("extraction_output"), indent=2, default=str))

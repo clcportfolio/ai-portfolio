@@ -30,6 +30,7 @@ st.set_page_config(
     layout="wide",
 )
 
+
 # ── Session state defaults ────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -77,21 +78,6 @@ if not st.session_state["authenticated"]:
                 else:
                     st.error("Invalid username or password.")
 
-        st.markdown(
-            """
-<div style="margin-top:20px; padding:12px 16px; border-radius:8px;
-     border:1px solid #333; background:#1a1a1a; font-size:0.85em; color:#aaa;">
-  <strong>Demo credentials</strong><br><br>
-  <code>demo-admin</code> / <code>demo-admin</code>
-  — full access + document deletion<br>
-  <code>demo-doctor</code> / <code>demo-doctor</code>
-  — full clinical access<br>
-  <code>demo-reception</code> / <code>demo-reception</code>
-  — routing + scheduling access only
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
     st.stop()
 
 
@@ -123,6 +109,12 @@ with st.sidebar:
             st.session_state.pop(key, None)
         st.rerun()
 
+    st.divider()
+    page = st.radio(
+        "Navigation",
+        ["🏥 Intake Router", "🔍 Query Database"],
+        label_visibility="collapsed",
+    )
     st.divider()
     st.markdown(
         """
@@ -160,6 +152,36 @@ except Exception:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 URGENCY_COLORS = {"Emergent": "#FF4B4B", "Urgent": "#FFA500", "Routine": "#21C354"}
 URGENCY_EMOJI  = {"Emergent": "🔴", "Urgent": "🟡", "Routine": "🟢"}
+
+
+def _traffic_light() -> None:
+    """
+    Render the agentic traffic indicator — a glowing dot + label showing
+    current request volume against the Redis rate limit window.
+    Hidden silently if Redis is not configured.
+    """
+    from guardrails import get_traffic_stats
+    stats = get_traffic_stats()
+    if not stats["available"]:
+        return
+    color = stats["color"]
+    level = stats["level"]
+    count = stats["count"]
+    limit = stats["limit"]
+    st.markdown(
+        f"""
+<div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+  <div style="width:10px; height:10px; border-radius:50%;
+              background:{color}; box-shadow:0 0 7px {color};
+              flex-shrink:0;"></div>
+  <span style="font-size:0.8em; color:#888;">
+    Agentic traffic:&nbsp;<strong style="color:{color};">{level}</strong>
+    <span style="color:#555;">&nbsp;({count}&thinsp;/&thinsp;{limit} req/min)</span>
+  </span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _extract_text(file_bytes: bytes, filename: str) -> str:
@@ -266,13 +288,14 @@ def _agent_expanders(result: dict, rc) -> None:
 
 
 def _run_pipeline(text: str, file_bytes=None, filename=None, content_type="text/plain") -> dict:
+    import asyncio
     from pipeline import run as pipeline_run
-    return pipeline_run(
+    return asyncio.run(pipeline_run(
         {"text": text},
         file_bytes=file_bytes,
         original_filename=filename,
         content_type=content_type,
-    )
+    ))
 
 
 # ── Module-level cached loaders ───────────────────────────────────────────────
@@ -296,13 +319,10 @@ def _load_recent_submissions():
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_router, tab_query = st.tabs(["🏥 Intake Router", "🔍 Query Database"])
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — INTAKE ROUTER
+# PAGE 1 — INTAKE ROUTER
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab_router:
+if page == "🏥 Intake Router":
 
     st.title("Clinical Intake Router")
     st.caption("Select an existing file from the directory, upload a new one, or paste text.")
@@ -387,17 +407,22 @@ with tab_router:
                     s3_key = selected_record.get("s3_key")
                     file_hash = selected_record.get("file_hash")
                     filename = selected_record.get("original_filename", "intake.txt")
-                    has_routing = bool(selected_record.get("routing_output"))
+                    has_routing = bool(selected_record.get("has_routing"))
                     patient_label = selected_record.get("patient_name") or filename
 
                     if has_routing:
                         st.success(f"Selected: **{patient_label}** — previously routed.")
+                        try:
+                            from storage.db_client import submission_exists
+                            full_record = submission_exists(file_hash) or selected_record
+                        except Exception:
+                            full_record = selected_record
                         st.session_state["prefilled_result"] = {
-                            "extraction_output": selected_record.get("extraction_output"),
-                            "classification_output": selected_record.get("classification_output"),
-                            "routing_output": selected_record.get("routing_output"),
+                            "extraction_output": full_record.get("extraction_output"),
+                            "classification_output": full_record.get("classification_output"),
+                            "routing_output": full_record.get("routing_output"),
                             "errors": [],
-                            "storage": {"duplicate": True, "s3": None, "db": selected_record, "storage_errors": []},
+                            "storage": {"duplicate": True, "s3": None, "db": full_record, "storage_errors": []},
                         }
                     else:
                         st.info(f"Selected: **{patient_label}** — not yet routed. Click **Route This Intake** to process.")
@@ -522,6 +547,11 @@ with tab_router:
         elif run_button:
             if not final_text.strip():
                 st.warning("Please provide intake form text before routing.")
+                st.stop()
+
+            from guardrails import rate_limit_check
+            if not rate_limit_check(username):
+                st.error("⚠️ Rate limit reached — too many requests this minute. Please wait and try again.")
                 st.stop()
 
             with st.spinner("Running pipeline — extracting, classifying, routing..."):
@@ -683,9 +713,9 @@ with tab_router:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — QUERY DATABASE
+# PAGE 2 — QUERY DATABASE
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab_query:
+elif page == "🔍 Query Database":
     st.title("Query Intake Database")
     st.caption("Ask a question in plain English. The system generates and runs the SQL for you.")
 
@@ -697,29 +727,6 @@ with tab_query:
             icon="ℹ️",
         )
 
-    with st.expander("Recent Submissions", expanded=True):
-        recent, recent_error = _load_recent_submissions()
-
-        if recent_error:
-            st.warning(f"Could not load submissions: {recent_error}")
-        elif not recent:
-            st.info("No submissions in the database yet. Route an intake form to get started.")
-        else:
-            import pandas as pd
-            df = pd.DataFrame(recent)
-
-            # Reception sees fewer columns
-            if role_config.can_see_full_extraction:
-                display_cols = ["id", "patient_name", "chief_complaint", "urgency_level",
-                                "department", "original_filename", "submitted_at"]
-            else:
-                display_cols = ["id", "patient_name", "urgency_level",
-                                "department", "original_filename", "submitted_at"]
-
-            display_cols = [c for c in display_cols if c in df.columns]
-            st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-
-    st.divider()
     st.subheader("Ask a Question")
 
     # Role-appropriate example questions
@@ -762,19 +769,27 @@ with tab_query:
         )
         ask_button = st.form_submit_button("Ask", type="primary")
 
+    _traffic_light()
+
     # Run if the form was submitted (Enter or button) OR an example was just clicked
     run_question = question.strip() if (ask_button and question.strip()) else (
         st.session_state.get("nl2sql_question", "").strip() if autorun else None
     )
 
     if run_question:
+        from guardrails import rate_limit_check
+        if not rate_limit_check(username):
+            st.error("⚠️ Rate limit reached — too many requests this minute. Please wait and try again.")
+            st.stop()
+
         with st.spinner("Generating SQL and querying database..."):
             try:
+                import asyncio
                 from agents.nl2sql_agent import run as nl2sql_run
-                nl_result = nl2sql_run(
+                nl_result = asyncio.run(nl2sql_run(
                     run_question,
                     role_config=role_config,
-                )
+                ))
             except Exception as e:
                 st.error(f"NL2SQL agent error: {e}")
                 st.stop()
@@ -814,3 +829,27 @@ with tab_query:
         st.warning("Please enter a question.")
     else:
         st.info("Type a question above or click an example to query the intake submissions database.")
+
+    st.divider()
+
+    with st.expander("Recent Submissions", expanded=False):
+        recent, recent_error = _load_recent_submissions()
+
+        if recent_error:
+            st.warning(f"Could not load submissions: {recent_error}")
+        elif not recent:
+            st.info("No submissions in the database yet. Route an intake form to get started.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame(recent)
+
+            # Reception sees fewer columns
+            if role_config.can_see_full_extraction:
+                display_cols = ["id", "patient_name", "chief_complaint", "urgency_level",
+                                "department", "original_filename", "submitted_at"]
+            else:
+                display_cols = ["id", "patient_name", "urgency_level",
+                                "department", "original_filename", "submitted_at"]
+
+            display_cols = [c for c in display_cols if c in df.columns]
+            st.dataframe(df[display_cols], use_container_width=True, hide_index=True)

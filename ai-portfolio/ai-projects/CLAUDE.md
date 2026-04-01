@@ -425,7 +425,7 @@ def sanitize_output(data: dict) -> dict:
     # Note: "replace with production-grade scanner (e.g. AWS Comprehend Medical) in prod"
 
 def rate_limit_check(user_id: str) -> bool:
-    """Stub — returns True. Comment: 'replace with Redis-backed counter in production'."""
+    """Redis fixed-window counter (100 req/60s). Falls back to True if REDIS_URL unset."""
 ```
 
 The PHI redaction stub is present in **every** project even when the app has nothing to

@@ -27,6 +27,7 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(), override=True)
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -57,7 +58,7 @@ def build_initial_state(validated_input: dict) -> dict:
 
 
 @observe(name="intake_route")
-def run(
+async def run(
     input_data: dict,
     user_id: str = "anonymous",
     file_bytes: Optional[bytes] = None,
@@ -170,19 +171,19 @@ def run(
         )
 
         # Step 1: Extract structured fields
-        state = extraction_run(state)
+        state = await extraction_run(state)
         if state["pipeline_step"] >= state["max_pipeline_steps"]:
             state["errors"].append("pipeline: max_pipeline_steps reached after extraction")
             return sanitize_output(state)
 
         # Step 2: Classify urgency and department
-        state = classification_run(state)
+        state = await classification_run(state)
         if state["pipeline_step"] >= state["max_pipeline_steps"]:
             state["errors"].append("pipeline: max_pipeline_steps reached after classification")
             return sanitize_output(state)
 
         # Step 3: Generate routing summary
-        state = routing_run(state)
+        state = await routing_run(state)
 
         # Post-flight: sanitize output
         state = sanitize_output(state)
@@ -200,47 +201,55 @@ def run(
             pass
 
     # ── Storage: S3 upload + DB insert ───────────────────────────────────────
-    # This runs AFTER the pipeline succeeds. Storage failures are non-fatal —
-    # they are logged and appended to storage_result["storage_errors"] but
-    # never raise or modify the routing output.
+    # Runs AFTER the pipeline succeeds. Storage failures are non-fatal.
+    # S3 and DB writes are dispatched via asyncio.to_thread() so they don't
+    # block the event loop — other concurrent requests can proceed while these
+    # synchronous I/O calls (boto3, psycopg2) are in flight.
+    # S3 must complete before DB insert because insert_submission needs the s3_key.
     if file_hash:
         try:
             from storage.s3_client import upload_file
             from storage.db_client import insert_submission, init_db
 
-            # Ensure table exists (idempotent)
+            # Ensure table exists (idempotent) — run in thread, non-blocking
             try:
-                init_db()
+                await asyncio.to_thread(init_db)
             except Exception as e:
                 logger.warning("DB init skipped: %s", e)
 
-            # Upload file to S3 if file bytes were provided
+            # S3 upload — non-blocking via to_thread
             s3_result = None
             if file_bytes and original_filename:
                 try:
-                    s3_result = upload_file(file_bytes, original_filename, content_type)
+                    s3_result = await asyncio.to_thread(
+                        upload_file, file_bytes, original_filename, content_type
+                    )
                     storage_result["s3"] = s3_result
                     logger.info("File uploaded to S3: %s", s3_result.get("s3_key"))
                 except Exception as e:
                     logger.warning("S3 upload failed (non-fatal): %s", e)
                     storage_result["storage_errors"].append(f"S3 upload failed: {e}")
 
-            # Write structured row to Postgres.
+            # DB write — non-blocking via to_thread.
             # If a partial row already exists (upload-only or synced from S3),
             # update it with the pipeline results rather than inserting a duplicate.
             try:
                 from storage.db_client import submission_exists, update_submission
-                existing = submission_exists(file_hash)
-                if existing and not existing.get("routing_output"):
-                    db_row = update_submission(file_hash, state)
-                    db_row["_duplicate"] = False
-                else:
-                    db_row = insert_submission(
+
+                def _db_write():
+                    existing = submission_exists(file_hash)
+                    if existing and not existing.get("routing_output"):
+                        row = update_submission(file_hash, state)
+                        row["_duplicate"] = False
+                        return row
+                    return insert_submission(
                         file_hash=file_hash,
                         pipeline_state=state,
                         s3_result=s3_result,
                         original_filename=original_filename,
                     )
+
+                db_row = await asyncio.to_thread(_db_write)
                 storage_result["db"] = db_row
                 storage_result["duplicate"] = db_row.get("_duplicate", False)
             except Exception as e:
@@ -292,6 +301,6 @@ if __name__ == "__main__":
         print("errors:", state["errors"])
     else:
         print("Running full pipeline (LLM calls will be made)...")
-        result = run(test_input)
+        result = asyncio.run(run(test_input))
         print("\n--- PIPELINE RESULT ---")
         print(json.dumps(result, indent=2, default=str))

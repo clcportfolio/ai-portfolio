@@ -393,7 +393,8 @@ def get_recent_submissions(limit: int = 20) -> list[dict]:
     return query_submissions(
         """
         SELECT id, file_hash, patient_name, chief_complaint, urgency_level, department,
-               original_filename, s3_key, file_size_bytes, submitted_at
+               original_filename, s3_key, file_size_bytes, submitted_at,
+               (routing_output IS NOT NULL) AS has_routing
         FROM intake_submissions
         ORDER BY submitted_at DESC
         LIMIT %s;

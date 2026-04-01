@@ -83,7 +83,15 @@ def _get_handler(state: dict) -> CallbackHandler:
     return state.get("langfuse_handler") or CallbackHandler()
 
 
-def run(state: dict) -> dict:
+# Built once at module load — reused on every request.
+_chain = CLASSIFICATION_PROMPT | ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1024,
+    temperature=0,
+).with_structured_output(ClassificationResult)
+
+
+async def run(state: dict) -> dict:
     """Classify urgency and department from extracted fields. Writes to state['classification_output']."""
     extraction = state.get("extraction_output")
     if not extraction:
@@ -92,18 +100,10 @@ def run(state: dict) -> dict:
         state["pipeline_step"] += 1
         return state
 
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        temperature=0,
-    )
-    structured_llm = llm.with_structured_output(ClassificationResult)
-    chain = CLASSIFICATION_PROMPT | structured_llm
-
     handler = _get_handler(state)
 
     try:
-        result: ClassificationResult = chain.invoke(
+        result: ClassificationResult = await _chain.ainvoke(
             {
                 "patient_name": extraction.get("patient_name", "Unknown"),
                 "age": extraction.get("age") or extraction.get("date_of_birth") or "Not provided",
@@ -126,6 +126,9 @@ def run(state: dict) -> dict:
 
 
 if __name__ == "__main__":
+    import asyncio
+    import json
+
     test_state = {
         "input": {"text": ""},
         "pipeline_step": 0,
@@ -145,9 +148,8 @@ if __name__ == "__main__":
             "additional_notes": None,
         },
     }
-    result = run(test_state)
+    result = asyncio.run(run(test_state))
     print("pipeline_step:", result["pipeline_step"])
     print("classification_output present:", "classification_output" in result)
     print("errors:", result["errors"])
-    import json
     print(json.dumps(result.get("classification_output"), indent=2, default=str))
