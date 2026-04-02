@@ -19,7 +19,7 @@ python scripts/seed_synthetic_data.py --trial-id 1        # seed synthetic patie
 
 **Tab 1 — Eligibility Check:** Select a stored trial from the dropdown (or paste custom criteria), enter a patient summary, and click Run. A color-coded verdict card shows Eligible / Ineligible / Needs Review with a confidence score, summary, and expandable per-criterion breakdown.
 
-**Tab 2 — Analytics:** Choose a trial and view 6 Plotly charts: eligibility distribution, confidence histogram, screening volume over time, average confidence by status, per-criterion pass rates, and synthetic vs. real patient mix. Use the "Generate Synthetic Patients" button to seed the dashboard with LLM-generated test data.
+**Tab 2 — Analytics:** Choose a trial and view 6 Plotly charts: eligibility status donut, four-category eligibility breakdown (High/Moderate Eligibility, Needs Review, Ineligible), confidence violin by status, average confidence bar, patient age violin, and sex breakdown by status. Use the "Generate Synthetic Patients" button to seed the dashboard with LLM-generated test data.
 
 ## How it works
 
@@ -30,9 +30,8 @@ Trial Criteria Text
  criteria_agent          ← extracts structured inclusion/exclusion criteria
        │                   (skipped if trial already has cached structured criteria)
        ▼
- evaluation_agent        ← evaluates patient against each criterion in parallel
-   (asyncio.gather —       via N concurrent LLM calls, one per criterion
-    N calls at once)
+ evaluation_agent        ← evaluates patient against all criteria in a single LLM call
+                           (one call per patient regardless of criterion count)
        │
        ▼
  verdict_agent           ← synthesizes per-criterion results into final verdict
@@ -54,8 +53,8 @@ The **confidence threshold slider** in the UI is a policy control: any verdict (
 The analytics summary metrics (Eligible / Ineligible / Needs Review counts) reflect the raw stored `eligibility_status`, independent of the threshold slider.
 
 ## Tech stack
-- LangChain + Claude (Anthropic) — Sonnet for reasoning, Haiku for fast per-criterion evaluation
-- Parallel async evaluation (`asyncio.gather`) — N criteria evaluated simultaneously
+- LangChain + Claude (Anthropic) — Sonnet for all reasoning and evaluation
+- Single-call evaluation — all criteria evaluated in one LLM call per patient
 - Langfuse observability — single trace per pipeline run, all agents nested
 - Supabase PostgreSQL — trial storage with cached structured criteria, screening history
 - Plotly — analytics charts
@@ -67,4 +66,4 @@ The analytics summary metrics (Eligible / Ineligible / Needs Review counts) refl
 
 **Deduplication:** Screenings are deduplicated by `(trial_id, SHA-256(patient_summary))`. Running the same patient against the same trial twice returns the cached result instantly.
 
-**Synthetic data:** The "Generate Synthetic Patients" button uses the trial's own criteria (structured when cached, raw text as fallback) to generate diverse fictional profiles via Claude Haiku, then runs each through the full pipeline. Synthetic screenings are flagged `is_synthetic=True` and can be filtered in analytics.
+**Synthetic data:** The "Generate Synthetic Patients" button uses the trial's own criteria (structured when cached, raw text as fallback) to generate diverse fictional profiles via Claude Sonnet (40% eligible, 50% ineligible, 10% borderline), then runs each through the full pipeline. Synthetic screenings are flagged `is_synthetic=True` and can be filtered in analytics.
