@@ -1,6 +1,11 @@
 # Clinical Trial Eligibility Screener
 
 Automates clinical trial eligibility screening — evaluates a patient summary against a trial's inclusion/exclusion criteria and returns a plain-English verdict with per-criterion reasoning. Helps clinical coordinators make faster, more consistent enrollment decisions.
+#### Demo built in ~8 work hours
+
+> **Live demo:** [Streamlit app](https://clcportfolio-clinical-trial-eligibility-screener.streamlit.app/)
+> **Live demo logins:** Contact Cody at: [clculver5@gmail.com](clculver5@gmail.com)
+> **Portfolio:** [github.com/clcportfolio/ai-portfolio](https://github.com/clcportfolio/ai-portfolio)
 
 ## Run it
 ```bash
@@ -9,7 +14,7 @@ cp .env.example .env        # add ANTHROPIC_API_KEY, LANGFUSE_*, SUPABASE_DB_URI
 streamlit run app.py
 ```
 
-**Demo credentials** — contact [Cody](mailto:cody@example.com) for access.
+**Demo credentials** — contact [Cody](clculver5@gmail.com) for access.
 
 To pre-populate the trial dropdown and analytics with sample data:
 ```bash

@@ -1,6 +1,7 @@
 # stereogram-converter
 
 Upload a greyscale depth map and download a Magic Eye stereogram. No AI, no API keys.
+#### Demo built in ~3 work hours
 
 ## Run it
 

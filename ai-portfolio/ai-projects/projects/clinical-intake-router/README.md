@@ -1,9 +1,11 @@
 # Clinical Intake Router
 
 A multi-agent LLM pipeline that reads a clinical intake form and routes the patient to the right department at the right urgency level — instantly. Built to demonstrate agentic workflow automation, structured LLM output, RBAC, NL2SQL with guardrails, and production observability in a healthcare context.
+#### Demo built in ~8 work hours
 
-> **Live demo:** *(Streamlit Community Cloud link — add after deploying)*
-> **Portfolio:** [github.com/codyculver/ai-portfolio](https://github.com/codyculver/ai-portfolio)
+> **Live demo:** [Streamlit app](https://clcportfolio-clinical-intake-router.streamlit.app/)
+> **Live demo logins:** Contact Cody at: [clculver5@gmail.com](clculver5@gmail.com)
+> **Portfolio:** [github.com/clcportfolio/ai-portfolio](https://github.com/clcportfolio/ai-portfolio)
 
 ---
 
