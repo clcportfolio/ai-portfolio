@@ -518,31 +518,52 @@ public API), and generates a plain-English safety report for a parent.
 - Stepwise: build `apps/image-preprocessor/` first (pure algorithm), then the full project
 - Demonstrates: vision, tool use, external API integration, consumer-facing output
 
-### 3. Clinical Trial Eligibility Screener (healthcare/agentic — build third)
+### 3. Clinical Trial Eligibility Screener (healthcare/agentic — **BUILT**)
 Location: `projects/clinical-trial-eligibility-screener/`
 
-A coordinator pastes a trial's inclusion/exclusion criteria into one text box and a
-patient summary into another. The pipeline evaluates the patient against every criterion
-and returns a plain-English eligibility verdict with explicit reasoning per criterion.
+**Status: complete.** Do not rebuild. Read the existing code and docs before touching it.
+
+A coordinator selects a stored trial from a dropdown (or pastes custom criteria) and enters
+a patient summary. The pipeline evaluates the patient against every criterion and returns a
+plain-English eligibility verdict with per-criterion reasoning and a confidence score.
 
 Pipeline agents:
-- `criteria_agent` — extracts and structures individual criteria from the raw trial text
-- `evaluation_agent` — evaluates the patient summary against each criterion one at a time
-- `verdict_agent` — synthesizes evaluations into a final verdict with plain-English reasoning
+- `criteria_agent` — extracts and structures individual criteria from raw trial text
+  (skipped on subsequent screenings — structured criteria are cached in the trials table)
+- `evaluation_agent` — evaluates the patient against ALL criteria in a single LLM call
+  (originally designed as one call per criterion via asyncio.gather, but 5 patients ×
+  7 criteria = 35 concurrent Sonnet calls hit rate limits and caused silent failures)
+- `verdict_agent` — verdict computed deterministically in Python from boolean evaluation
+  results; LLM writes the plain-English explanation only (early versions let the LLM
+  decide the verdict but it consistently hedged to NEEDS_REVIEW even on clear cases)
 
-Streamlit UI:
-- Two text area inputs: "Trial Criteria" and "Patient Summary"
-- A "Run Eligibility Check" button
-- A verdict card showing Eligible / Likely Ineligible / Needs Review with a color indicator
-- An expander showing the per-criterion evaluation breakdown
-- A sidebar with project description, tech stack, and GitHub link
+**What was built beyond the original spec:**
+- Supabase PostgreSQL storage: trials + screenings tables, structured_criteria caching,
+  SHA-256 dedup by (trial_id, patient_summary hash), patient age/sex extraction
+- Two-tab Streamlit UI: Tab 1 = eligibility check with per-criterion breakdown,
+  Tab 2 = analytics dashboard with 6 Plotly charts
+- Synthetic patient generation via `agents/synthetic_generator.py` — generates
+  40% eligible / 50% ineligible / 10% borderline profiles using the trial's own
+  structured criteria; eligible batch uses a separate prompt (combined prompts produced
+  summaries too ambiguous to score as clearly eligible)
+- `scripts/seed_trials.py` and `scripts/seed_synthetic_data.py` for seeding sample data
+- `auth.py` — role-gated access scaffolding (wired but not connected to UI)
+- Async pipeline with Langfuse tracing (`@observe` + `propagate_attributes`)
 
-Stretch goal (do not build now, note in `docs/`): Option C — user selects from a dropdown
-of preloaded ClinicalTrials.gov trials via their free public API instead of pasting
-criteria manually.
+**Critical bug discovered and fixed during build:**
+The `meets_criterion` boolean has opposite semantics for inclusion vs. exclusion criteria.
+For exclusion criteria, `true` means the patient HAS the disqualifying condition (bad).
+This was never explained to the evaluation LLM, causing it to mark "no DKA history" as
+`meets_criterion=true` on the exclusion criterion "History of DKA" — every patient was
+classified as INELIGIBLE. Fixing this required explicit examples in the evaluation prompt
+and moving the verdict to deterministic Python.
 
-- Demonstrates: multi-step reasoning, structured output, healthcare context, agentic decomposition
-- Direct analog to M3's clinical research business (Wake Research, trial coordination workflows)
+Stretch goal (do not build now): connect to ClinicalTrials.gov API so coordinators select
+trials by NCT ID instead of pasting criteria manually.
+
+- Demonstrates: multi-step reasoning, structured output, async pipeline, deterministic
+  verdict logic, healthcare context, Supabase storage, analytics dashboard
+- Direct analog to M3's clinical research business (Wake Research, trial coordination)
 
 ### Stepwise build pattern (for complex projects)
 When a project has a non-AI algorithmic component, build it in `apps/` first and
