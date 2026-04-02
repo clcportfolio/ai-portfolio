@@ -53,7 +53,7 @@ The **confidence threshold slider** in the UI is a policy control: any verdict (
 The analytics summary metrics (Eligible / Ineligible / Needs Review counts) reflect the raw stored `eligibility_status`, independent of the threshold slider.
 
 ## Tech stack
-- LangChain + Claude (Anthropic) — Sonnet for all reasoning and evaluation
+- LangChain + Claude (Anthropic) — Sonnet for all reasoning and evaluation (Haiku was tested but hedged too aggressively on exclusion criteria, producing false INELIGIBLE verdicts; Sonnet follows the inclusion/exclusion boolean semantics reliably)
 - Single-call evaluation — all criteria evaluated in one LLM call per patient
 - Langfuse observability — single trace per pipeline run, all agents nested
 - Supabase PostgreSQL — trial storage with cached structured criteria, screening history
