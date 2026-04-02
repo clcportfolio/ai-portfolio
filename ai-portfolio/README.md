@@ -86,4 +86,4 @@ streamlit run app.py
 
 ---
 
-*Built with [Claude Code](https://claude.ai/claude-code)*
+*Built with support from [Claude Code](https://claude.ai/claude-code)*
