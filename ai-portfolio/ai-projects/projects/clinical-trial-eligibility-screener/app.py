@@ -145,6 +145,12 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    page = st.radio(
+        "Navigation",
+        ["🩺 Eligibility Check", "📊 Analytics"],
+        label_visibility="collapsed",
+    )
+    st.divider()
     st.markdown(
         "**What it does:** Automates clinical trial eligibility screening — "
         "evaluates a patient summary against trial criteria and returns a "
@@ -159,12 +165,6 @@ with st.sidebar:
     st.markdown("- Streamlit")
     st.markdown("[GitHub Repo](https://github.com/clcportfolio/ai-portfolio)")
 
-    st.divider()
-    page = st.radio(
-        "Navigation",
-        ["🩺 Eligibility Check", "📊 Analytics"],
-        label_visibility="collapsed",
-    )
     st.divider()
     db_ok = _db_available()
     if db_ok:
