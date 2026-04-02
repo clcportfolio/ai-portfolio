@@ -9,6 +9,8 @@ cp .env.example .env        # add ANTHROPIC_API_KEY, LANGFUSE_*, SUPABASE_DB_URI
 streamlit run app.py
 ```
 
+**Demo credentials** — contact [Cody](mailto:cody@example.com) for access.
+
 To pre-populate the trial dropdown and analytics with sample data:
 ```bash
 python scripts/seed_trials.py                              # insert 3 sample trials
@@ -66,7 +68,7 @@ This is a portfolio demo. Here is what would change before putting it in front o
 
 **Model evaluation and drift detection:** There is currently no way to know if the model's verdicts are correct. In production, a sample of ELIGIBLE and INELIGIBLE verdicts would be reviewed by a clinical coordinator, with agreement rates tracked in Langfuse. If agreement drops below a threshold, the evaluation prompt or model would be flagged for review. The synthetic data pipeline would be repurposed to generate regression test cases for prompt changes.
 
-**Authentication and role-based access:** `auth.py` is scaffolded but not wired into the UI. Production would gate the app behind SSO, restrict trial visibility by sponsor/site, and log every screening action by user ID for audit purposes.
+**Authentication and role-based access:** The app is gated behind a login screen with two demo roles — coordinator (run screenings, view verdicts) and admin (full access including raw agent outputs and synthetic data seeding). `RoleConfig` is a Pydantic model that acts as the single source of truth for every role-dependent UI decision. Production would replace the hardcoded credential store with SSO, restrict trial visibility by sponsor/site, and log every screening action by user ID for audit purposes.
 
 **Scalability:** The current pipeline runs synchronously in Streamlit's process, which blocks the UI during screening. A production deployment would decouple screening into a background task queue (Celery, AWS SQS) with a webhook or polling mechanism to return results, allowing the UI to remain responsive and supporting batch screening of hundreds of patients at once.
 

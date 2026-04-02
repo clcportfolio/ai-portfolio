@@ -22,6 +22,8 @@ import pandas as pd
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
+from auth import authenticate, RoleConfig
+
 load_dotenv(find_dotenv(), override=True)
 
 logger = logging.getLogger(__name__)
@@ -38,9 +40,37 @@ for key, default in [
     ("db_available", None),    # None = not checked yet
     ("trials_cache", None),
     ("seed_just_completed", False),
+    ("authenticated", False),
+    ("role_config", None),
+    ("username", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+
+# ── Login gate ───────────────────────────────────────────────────────────────
+if not st.session_state["authenticated"]:
+    st.markdown("<h2 style='text-align:center;'>Clinical Trial Eligibility Screener</h2>",
+                unsafe_allow_html=True)
+    _, col_login, _ = st.columns([1, 1.5, 1])
+    with col_login:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Log in", use_container_width=True)
+            if submitted:
+                rc = authenticate(username, password)
+                if rc:
+                    st.session_state["authenticated"] = True
+                    st.session_state["role_config"] = rc
+                    st.session_state["username"] = username.lower().strip()
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials.")
+    st.stop()
+
+role_config: RoleConfig = st.session_state["role_config"]
+username: str = st.session_state["username"]
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -100,6 +130,21 @@ def _get_stats(trial_id: int) -> dict:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("Clinical Trial Eligibility Screener")
+
+    # Role badge + logout
+    badge_html = (
+        f'<span style="background:{role_config.badge_color};color:#fff;'
+        f'padding:2px 10px;border-radius:12px;font-size:0.85em;">'
+        f'{role_config.display_name}</span>'
+    )
+    st.markdown(f"Logged in as **{username}** &nbsp;{badge_html}", unsafe_allow_html=True)
+    if st.button("Log out", key="logout_btn"):
+        for k in ("authenticated", "role_config", "username"):
+            st.session_state[k] = None
+        st.session_state["authenticated"] = False
+        st.rerun()
+
+    st.divider()
     st.markdown(
         "**What it does:** Automates clinical trial eligibility screening — "
         "evaluates a patient summary against trial criteria and returns a "
@@ -173,8 +218,10 @@ with tab1:
                 ),
                 key="criteria_text_input",
             )
-            # Optional: save as a new trial
-            if db_ok:
+            # Optional: save as a new trial (requires can_manage_trials)
+            save_trial = False
+            trial_name_input = ""
+            if db_ok and role_config.can_manage_trials:
                 save_trial = st.checkbox("Save as a new trial for future reuse")
                 if save_trial:
                     trial_name_input = st.text_input(
@@ -182,11 +229,6 @@ with tab1:
                         placeholder="e.g. DIABETES-PILOT-2025",
                         key="new_trial_name",
                     )
-                else:
-                    trial_name_input = ""
-            else:
-                save_trial = False
-                trial_name_input = ""
         else:
             # Show stored criteria as read-only
             trial_criteria_text = selected_trial["criteria_text"]
@@ -249,7 +291,7 @@ with tab1:
                     else:
                         pipeline_input["trial_id"] = selected_trial["id"]
 
-                    result = asyncio.run(pipeline.run(pipeline_input))
+                    result = asyncio.run(pipeline.run(pipeline_input, user_id=username))
                     st.session_state["last_result"] = result
 
                     # Refresh trials cache in case a new trial was just saved
@@ -339,13 +381,14 @@ with tab1:
                         st.write(f"*Relevant info:* {patient_info}")
                     st.divider()
 
-        # Agent output expanders
-        with st.expander("Criteria Agent Output", expanded=False):
-            st.json(result.get("criteria_agent_output") or {})
-        with st.expander("Evaluation Agent Output", expanded=False):
-            st.json(result.get("evaluation_agent_output") or {})
-        with st.expander("Verdict Agent Output", expanded=False):
-            st.json(result.get("verdict_agent_output") or {})
+        # Agent output expanders (admin only)
+        if role_config.can_see_agent_outputs:
+            with st.expander("Criteria Agent Output", expanded=False):
+                st.json(result.get("criteria_agent_output") or {})
+            with st.expander("Evaluation Agent Output", expanded=False):
+                st.json(result.get("evaluation_agent_output") or {})
+            with st.expander("Verdict Agent Output", expanded=False):
+                st.json(result.get("verdict_agent_output") or {})
 
         if result.get("errors"):
             with st.expander("Pipeline Warnings"):
@@ -397,46 +440,47 @@ with tab2:
     )
     analytics_threshold = analytics_threshold_pct / 100
 
-    # Synthetic data seeding
-    col_seed_count, col_seed_btn, _ = st.columns([1, 1, 2])
-    with col_seed_count:
-        seed_count = st.number_input(
-            "Patients to generate",
-            min_value=1,
-            max_value=25,
-            value=15,
-            key="seed_count_input",
-        )
-    with col_seed_btn:
-        st.write("")  # vertical alignment spacer
-        st.write("")
-        if st.button("Generate Synthetic Patients", key="seed_btn"):
-            try:
-                from scripts.seed_synthetic_data import seed_trial as _seed
-                progress_bar = st.progress(0, text=f"Generating {seed_count} patient profile(s) with LLM...")
-                status_text = st.empty()
+    # Synthetic data seeding (admin only)
+    if role_config.can_seed_synthetic_data:
+        col_seed_count, col_seed_btn, _ = st.columns([1, 1, 2])
+        with col_seed_count:
+            seed_count = st.number_input(
+                "Patients to generate",
+                min_value=1,
+                max_value=25,
+                value=15,
+                key="seed_count_input",
+            )
+        with col_seed_btn:
+            st.write("")  # vertical alignment spacer
+            st.write("")
+            if st.button("Generate Synthetic Patients", key="seed_btn"):
+                try:
+                    from scripts.seed_synthetic_data import seed_trial as _seed
+                    progress_bar = st.progress(0, text=f"Generating {seed_count} patient profile(s) with LLM...")
+                    status_text = st.empty()
 
-                def _on_progress(completed, total):
-                    pct = completed / total
-                    progress_bar.progress(pct, text=f"Screening patients — {completed}/{total} complete ({pct:.0%})")
+                    def _on_progress(completed, total):
+                        pct = completed / total
+                        progress_bar.progress(pct, text=f"Screening patients — {completed}/{total} complete ({pct:.0%})")
 
-                summary = asyncio.run(_seed(trial_id=trial_id, count=seed_count, use_llm=True, on_progress=_on_progress))
-                progress_bar.progress(1.0, text="Screening complete.")
+                    summary = asyncio.run(_seed(trial_id=trial_id, count=seed_count, use_llm=True, on_progress=_on_progress))
+                    progress_bar.progress(1.0, text="Screening complete.")
 
-                if summary and summary.get("ok", 0) > 0:
-                    status_text.success(f"{summary['ok']} new screening(s) inserted. {summary.get('dups', 0)} duplicate(s) skipped.")
-                    st.session_state["seed_just_completed"] = True
-                elif summary and summary.get("dups", 0) > 0:
-                    status_text.warning(f"All {summary['dups']} patient(s) were already screened for this trial (duplicates). Delete existing screenings in Supabase to re-seed.")
-                elif summary and summary.get("errors", 0) > 0:
-                    status_text.error(f"{summary['errors']} error(s) during screening. Check terminal output for details.")
-                else:
-                    status_text.warning("No patients were generated. Check that ANTHROPIC_API_KEY is set and the trial exists.")
-            except Exception as e:
-                st.error(f"Seeding failed: {e}")
+                    if summary and summary.get("ok", 0) > 0:
+                        status_text.success(f"{summary['ok']} new screening(s) inserted. {summary.get('dups', 0)} duplicate(s) skipped.")
+                        st.session_state["seed_just_completed"] = True
+                    elif summary and summary.get("dups", 0) > 0:
+                        status_text.warning(f"All {summary['dups']} patient(s) were already screened for this trial (duplicates). Delete existing screenings in Supabase to re-seed.")
+                    elif summary and summary.get("errors", 0) > 0:
+                        status_text.error(f"{summary['errors']} error(s) during screening. Check terminal output for details.")
+                    else:
+                        status_text.warning("No patients were generated. Check that ANTHROPIC_API_KEY is set and the trial exists.")
+                except Exception as e:
+                    st.error(f"Seeding failed: {e}")
 
-    if st.session_state.pop("seed_just_completed", False):
-        st.rerun()
+        if st.session_state.pop("seed_just_completed", False):
+            st.rerun()
 
     screenings = _load_screenings(trial_id)
     stats = _get_stats(trial_id)
