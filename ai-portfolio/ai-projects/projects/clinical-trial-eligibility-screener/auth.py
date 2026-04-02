@@ -54,8 +54,8 @@ ROLE_CONFIGS: dict[str, RoleConfig] = {
 # Demo credential store — plaintext for demo purposes only.
 # Production: replace with hashed credentials + secure storage.
 USERS: dict[str, dict] = {
-    "coordinator": {"password": "coordinator123", "role": "coordinator"},
-    "admin": {"password": "admin123", "role": "admin"},
+    "demo-coordinator": {"password": "coordinator-demo", "role": "coordinator"},
+    "demo-admin": {"password": "admin-demo", "role": "admin"},
 }
 
 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     print("=== Auth Smoke Test ===\n")
 
     # Valid logins
-    for uname, pwd in [("coordinator", "coordinator123"), ("admin", "admin123")]:
+    for uname, pwd in [("demo-coordinator", "coordinator-demo"), ("demo-admin", "admin-demo")]:
         cfg = authenticate(uname, pwd)
         assert cfg is not None, f"Expected auth success for {uname}"
         print(f"  {uname!r} → role={cfg.role!r}, badge={cfg.badge_color}")
