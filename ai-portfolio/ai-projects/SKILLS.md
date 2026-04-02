@@ -358,12 +358,8 @@ def _get_llm() -> ChatAnthropic:
 
 
 def _get_handler() -> CallbackHandler:
-    return CallbackHandler(
-        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_name=f"{PROJECT_NAME}/{AGENT_NAME}",
-    )
+    # Langfuse v4 reads keys from env vars automatically — do NOT pass them as kwargs
+    return CallbackHandler()
 
 
 def run(state: dict) -> dict:
@@ -687,6 +683,13 @@ let the pipeline continue and surface warnings in the Streamlit UI.
 | Document summarization | `claude-haiku-4-5-20251001` | 0.3 |
 | Report / narrative generation | `claude-sonnet-4-20250514` | 0.5 |
 | Prompt injection / safety check | `claude-haiku-4-5-20251001` | 0 |
+
+**Haiku caveat — medical/boolean reasoning:** Haiku hedges aggressively on tasks that
+require strict boolean semantics (e.g. "does this patient satisfy this criterion?").
+In the clinical trial screener, Haiku consistently misclassified eligible patients as
+ineligible by failing to correctly apply inclusion vs. exclusion logic even with explicit
+prompt instructions. Use Sonnet for any evaluation task where correctness of
+true/false judgments is critical, not just output quality.
 
 ## Quick Reference — Pattern Picker
 
