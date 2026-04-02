@@ -160,6 +160,12 @@ with st.sidebar:
     st.markdown("[GitHub Repo](https://github.com/clcportfolio/ai-portfolio)")
 
     st.divider()
+    page = st.radio(
+        "Navigation",
+        ["🩺 Eligibility Check", "📊 Analytics"],
+        label_visibility="collapsed",
+    )
+    st.divider()
     db_ok = _db_available()
     if db_ok:
         st.success("Database connected")
@@ -167,14 +173,10 @@ with st.sidebar:
         st.warning("No database (SUPABASE_DB_URI not set). Stored trials unavailable.")
 
 
-# ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["Eligibility Check", "Analytics"])
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — ELIGIBILITY CHECK
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab1:
+if page == "🩺 Eligibility Check":
     st.header("Eligibility Check")
     st.caption("Evaluate a patient against a trial's inclusion/exclusion criteria.")
 
@@ -399,7 +401,7 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — ANALYTICS
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab2:
+elif page == "📊 Analytics":
     st.header("Screening Analytics")
 
     if not _db_available():
