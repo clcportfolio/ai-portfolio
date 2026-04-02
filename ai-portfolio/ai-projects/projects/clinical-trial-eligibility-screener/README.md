@@ -52,6 +52,24 @@ The **confidence threshold slider** in the UI is a policy control: any verdict (
 
 The analytics summary metrics (Eligible / Ineligible / Needs Review counts) reflect the raw stored `eligibility_status`, independent of the threshold slider.
 
+## Production considerations
+
+This is a portfolio demo. Here is what would change before putting it in front of real coordinators:
+
+**Real patient data and PHI compliance:** The demo accepts free-text patient summaries with no de-identification step. In production, patient input would be de-identified before entering the pipeline (using AWS Comprehend Medical or an equivalent), all storage would be HIPAA-compliant, and audit logs would track every screening by user, timestamp, and trial. The SHA-256 dedup key would need to be replaced — hashing raw PHI is not sufficient for compliance.
+
+**Structured patient records instead of free text:** Free-text summaries work for a demo but are unreliable in production — the evaluation quality depends entirely on how well the summary was written. A real deployment would pull structured fields (age, diagnoses, medications, lab values, comorbidities) from an EHR integration (HL7 FHIR, Epic, Cerner) and format them deterministically before passing to the evaluation agent. This removes ambiguity from the most common source of NEEDS_REVIEW verdicts: missing information.
+
+**ClinicalTrials.gov integration:** The demo requires coordinators to paste criteria manually. Production would connect to the ClinicalTrials.gov API to fetch structured trial criteria by NCT ID, eliminating manual entry and the risk of copy-paste errors.
+
+**Human-in-the-loop review queue:** NEEDS_REVIEW verdicts currently surface in the analytics dashboard but have no workflow attached. A production system would route these to a coordinator queue with a UI for confirming or overriding the verdict, capturing ground-truth labels that can be used to evaluate model performance over time.
+
+**Model evaluation and drift detection:** There is currently no way to know if the model's verdicts are correct. In production, a sample of ELIGIBLE and INELIGIBLE verdicts would be reviewed by a clinical coordinator, with agreement rates tracked in Langfuse. If agreement drops below a threshold, the evaluation prompt or model would be flagged for review. The synthetic data pipeline would be repurposed to generate regression test cases for prompt changes.
+
+**Authentication and role-based access:** `auth.py` is scaffolded but not wired into the UI. Production would gate the app behind SSO, restrict trial visibility by sponsor/site, and log every screening action by user ID for audit purposes.
+
+**Scalability:** The current pipeline runs synchronously in Streamlit's process, which blocks the UI during screening. A production deployment would decouple screening into a background task queue (Celery, AWS SQS) with a webhook or polling mechanism to return results, allowing the UI to remain responsive and supporting batch screening of hundreds of patients at once.
+
 ## Tech stack
 - LangChain + Claude (Anthropic) — Sonnet for all reasoning and evaluation (Haiku was tested but hedged too aggressively on exclusion criteria, producing false INELIGIBLE verdicts; Sonnet follows the inclusion/exclusion boolean semantics reliably)
 - Single-call evaluation — all criteria evaluated in one LLM call per patient
