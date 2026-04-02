@@ -140,7 +140,7 @@ patient to the right department at the right urgency level — instantly.
         """
     )
     st.divider()
-    st.markdown("[GitHub](https://github.com/codyculver/ai-portfolio) · Built with Claude Code")
+    st.markdown("[GitHub](https://github.com/clcportfolio/ai-portfolio) · Built with Claude Code")
 
 # ── DB init on startup ────────────────────────────────────────────────────────
 try:
