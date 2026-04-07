@@ -565,6 +565,90 @@ trials by NCT ID instead of pasting criteria manually.
   verdict logic, healthcare context, Supabase storage, analytics dashboard
 - Direct analog to M3's clinical research business (Wake Research, trial coordination)
 
+### 4. Medical Triage Classifier (healthcare/ML — build after intake router)
+Location: `projects/medical-triage-classifier/`
+
+Fine-tunes Bio_ClinicalBERT or distilbert-base-uncased via HuggingFace PEFT/LoRA to
+classify clinical text into Routine / Urgent / Emergency urgency levels. Once complete,
+`classifier.py` will be integrated into `projects/clinical-intake-router/` as a planned
+enhancement — the intake router's `classification_agent` currently uses Claude directly
+for urgency classification; this project builds a cheaper, faster, fine-tuned alternative.
+
+**This project does NOT use the pipeline.py/agents/ pattern or the build loop.** It is
+a model training and evaluation project. It follows all other CLAUDE.md conventions:
+`guardrails.py`, `.env.example`, `.gitignore`, `.venv`, `__main__` blocks on every `.py`
+file, tech_writer docs, and `app.py` for the Streamlit demo.
+
+**Dataset:**
+- Single bulk CSV download from MTSamples (mtsamples.com) — a legitimate clinical NLP
+  resource of anonymized medical transcription samples
+- Augmented with Claude-generated synthetic examples up to 500–1000 total, evenly
+  distributed across Routine / Urgent / Emergency
+- Raw CSV stored in S3, not committed to repo
+
+**Infrastructure (primary — not a stretch goal):**
+- MLflow Tracking Server deployed on AWS EC2 free tier — all training runs log here,
+  not to localhost
+- S3 stores: raw dataset CSV, model checkpoints at each epoch, final model artifacts
+- MLflow Model Registry (backed by S3) is the authoritative model store
+- `classifier.py` loads the registered model from MLflow Model Registry at inference
+  time — never from a local path
+
+**Training:**
+- Runs on Google Colab or AWS SageMaker (GPU required — do not attempt local CPU training)
+- `trainer.py` connects to EC2 MLflow Tracking Server remotely during training
+- Checkpoints saved to S3 at each epoch
+- Final model registered to MLflow Model Registry on training completion
+
+**Build order:**
+1. `provision_infra.py` — documents EC2 MLflow server setup and S3 bucket config
+   (boto3 for S3 buckets, instructions for manual EC2 steps)
+2. `data_prep.py` — loads MTSamples CSV from S3, generates synthetic examples via
+   Claude, logs dataset stats to MLflow
+3. `trainer.py` — LoRA fine-tuning via PEFT, logs metrics to MLflow Tracking Server
+   on EC2, checkpoints to S3, registers final model to MLflow Model Registry
+4. `evaluator.py` — compares baseline (pre-trained) vs fine-tuned vs Claude on held-out
+   test set, logs all metrics (accuracy, F1, latency, cost) to MLflow
+5. `classifier.py` — loads registered model from MLflow Model Registry, exposes
+   `run({"text": str}) -> {"urgency": str, "confidence": float, "model": str}`
+6. `guardrails.py` — input validation, output sanitization, PHI redaction stub
+7. `app.py` — Streamlit three-way comparison dashboard
+8. tech_writer docs (`docs/overview_nontechnical.md`, `overview_technical.md`,
+   `build_walkthrough.md`)
+9. README with MLflow UI screenshots placeholder and architecture diagram showing
+   EC2 / S3 / Registry data flow
+
+**Streamlit UI (app.py):**
+- Text input: chief complaint or clinical note
+- Results card: baseline / fine-tuned / Claude side by side with urgency label and
+  confidence score
+- Metrics table: accuracy, latency, cost per 1000 calls
+- Expander: MLflow run ID, hyperparameters, model version from Registry
+- Expander: dataset composition — real vs synthetic counts, label distribution
+- Sidebar: link to live MLflow Tracking Server on EC2, GitHub link
+
+**Dependencies:** `transformers`, `peft`, `datasets`, `mlflow`, `torch`,
+`scikit-learn`, `accelerate`, `boto3`, `psycopg2-binary` (plus standard CLAUDE.md
+base deps)
+
+**Future Integration Notes (docs/overview_technical.md):**
+- Document how `classifier.py` maps to the intake router's `classification_agent`
+  interface — same input (clinical text), same output shape (urgency level + confidence)
+- Note integration opportunities: shared S3 bucket, Langfuse traces alongside MLflow
+  metrics, Supabase for storing classification comparisons
+- Do not modify any existing intake router files — suggestions only
+
+Stretch goal (do not build now, note in `docs/`): RLHF layer — collect clinician
+feedback on classifications via a simple thumbs up/down UI in the Streamlit app, use
+as preference data for reward model training. Note KLA JD alignment explicitly in
+`overview_technical.md`.
+
+- Demonstrates: model fine-tuning (PEFT/LoRA), MLflow experiment tracking and model
+  registry, EC2 infrastructure, S3 artifact management, three-way model comparison,
+  healthcare context, production ML pipeline
+- Direct analog to M3's clinical operations: automated triage reduces coordinator
+  workload and standardizes urgency classification across sites
+
 ### Stepwise build pattern (for complex projects)
 When a project has a non-AI algorithmic component, build it in `apps/` first and
 validate it standalone before wrapping it in the full project pipeline.

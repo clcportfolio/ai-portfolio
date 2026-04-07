@@ -580,3 +580,54 @@ Naming convention going forward:
 - Standalone agent runs: trace named by `run_name` on `chain.invoke` (e.g. `"extraction_agent"`)
 
 **Files changed:** `pipeline.py`, `docs/overview_technical.md`.
+
+---
+
+## Ask 21 — Add Medical Triage Classifier to CLAUDE.md Suggested Projects
+
+**Outcome:** Added `### 4. Medical Triage Classifier` to CLAUDE.md's Suggested Projects
+section, positioned after project #3 (Clinical Trial Eligibility Screener) and before the
+Stepwise build pattern section. No other entries modified.
+
+### What was added
+Full project spec for `projects/medical-triage-classifier/` — a PEFT/LoRA fine-tuning
+project that trains Bio_ClinicalBERT or distilbert on MTSamples + Claude-generated
+synthetic data to classify clinical text into Routine / Urgent / Emergency urgency levels.
+
+### Key architectural decisions documented in the spec
+
+| Decision | Rationale |
+|---|---|
+| Does NOT use pipeline.py/agents/ or build loop | This is a model training project, not a multi-agent pipeline |
+| MLflow Tracking Server on EC2 (primary, not stretch) | Production ML requires centralized experiment tracking; localhost MLflow is not shareable |
+| MLflow Model Registry as authoritative model store | `classifier.py` loads from registry at inference time — never local paths |
+| S3 for dataset + checkpoints + artifacts | Raw CSV not committed; checkpoints enable resume; artifacts enable registry |
+| Colab/SageMaker for training (GPU required) | LoRA fine-tuning on BERT needs GPU; local CPU training would take hours |
+| Three-way Streamlit comparison (baseline vs fine-tuned vs Claude) | Shows cost/latency/accuracy tradeoffs — strongest interview artifact |
+| `classifier.py` interface matches intake router's classification_agent | Same input (text) and output shape (urgency + confidence) for future drop-in replacement |
+| Future Integration Notes in overview_technical.md | Documents how this connects to clinical-intake-router without modifying any intake router files |
+| RLHF stretch goal with KLA JD alignment note | Clinician feedback loop for reward model training — noted but not built |
+
+### Build order (9 steps)
+1. `provision_infra.py` — EC2 MLflow + S3 bucket setup docs
+2. `data_prep.py` — MTSamples load + Claude synthetic augmentation + MLflow logging
+3. `trainer.py` — LoRA fine-tuning, EC2 MLflow tracking, S3 checkpoints, model registration
+4. `evaluator.py` — baseline vs fine-tuned vs Claude comparison, all metrics to MLflow
+5. `classifier.py` — loads from MLflow Model Registry, exposes `run()` interface
+6. `guardrails.py` — standard input/output/PHI stub
+7. `app.py` — Streamlit three-way comparison dashboard
+8. tech_writer docs
+9. README with architecture diagram
+
+### Clinical intake router review
+Read the full `projects/clinical-intake-router/` codebase to understand integration
+points. Key findings:
+- `classification_agent.py` uses Claude Sonnet at temperature 0 with `ClassificationResult`
+  Pydantic model (urgency_level, department, classification_reasoning, confidence, red_flags)
+- S3 client in `storage/s3_client.py` — shared bucket pattern viable
+- Supabase for structured results — could store classification comparisons
+- Langfuse v4 tracing already in place — fine-tuned model traces would appear alongside
+- MLflow is not used anywhere in the intake router
+- No intake router files were modified — integration suggestions documented in spec only
+
+**Files changed:** `CLAUDE.md` (new project #4 entry), `CHAT_LOG.md` (this entry).
