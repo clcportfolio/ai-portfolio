@@ -28,51 +28,60 @@ Key dependency additions beyond the base:
 **What it does:** Creates S3 bucket with prefix structure for datasets, checkpoints,
 and model artifacts. Documents EC2 MLflow server setup.
 
-**Design decision — local MLflow first:**
-`MLFLOW_TRACKING_URI` defaults to `http://localhost:5000`. Run `mlflow ui` locally
-during development. When EC2 is set up, change one env var. No code changes needed.
+**Design decision — local MLflow first, then EC2:**
+Started with `mlflow ui` locally during development to avoid blocking on infra.
+`MLFLOW_TRACKING_URI` is an env var — switching from `http://127.0.0.1:5000` to
+the EC2 public IP was a one-line `.env` change, no code changes needed. EC2 runs
+on a free-tier t2.micro with SQLite backend and S3 artifact store.
 
 **S3 prefix structure:**
 ```
 medical-triage-classifier/
   datasets/    ← train.csv, val.csv, test.csv
   checkpoints/ ← per-epoch model saves
-  models/      ← final registered model artifacts
+  models/      ← final registered model artifacts (timestamped + latest)
 ```
 
 ---
 
 ## Step 3: Data Preparation (data_prep.py)
 
-**What it does:** Loads MTSamples CSV, maps specialties to urgency labels, generates
-synthetic examples to balance classes, splits data, uploads to S3, logs stats to MLflow.
+**What it does:** Loads MTSamples CSV, labels urgency, splits data, uploads to S3,
+logs stats to MLflow.
 
-**Labeling strategy:**
-MTSamples has a `medical_specialty` column. Rather than manually annotating thousands
-of notes, we map specialties to urgency levels based on clinical heuristic:
-- Emergency Room Reports → Emergency (obvious)
-- Cardiovascular/Pulmonary → Emergency (acute presentations common)
-- General Medicine → Routine (scheduled visits)
-- Orthopedic → Urgent (injuries needing timely care)
+**Critical pivot — specialty mapping → Sonnet content labeling:**
 
-This is a pragmatic choice for a portfolio project. Production would use expert annotation.
+The initial approach mapped `medical_specialty` to urgency via heuristic (e.g.,
+"Orthopedic" → Urgent). This produced 58% accuracy. Investigation revealed the
+problem: an ER note about a minor sprain was labeled "Emergency" because of the
+department, not the content. The model learned department writing style, not
+clinical urgency.
 
-**Synthetic augmentation:**
-After labeling, some classes are underrepresented. Claude Haiku generates synthetic
-clinical notes to reach ~300 per class. Separate prompts per urgency level — combining
-them in one prompt produced ambiguous examples that were hard to classify.
+The fix: `load_and_label_with_llm()` sends each note to Claude Sonnet with explicit
+urgency definitions. Sonnet reads the content — vital signs, symptoms, acuity — and
+assigns the label. This single change improved accuracy from 58% to 74%. The model
+architecture, hyperparameters, and training procedure were identical.
 
-The synthetic ratio is tracked in MLflow so we can measure its impact on model quality.
+**Lesson:** Data quality > model tuning. Fixing the labels had 4x more impact than
+any hyperparameter change could have.
+
+**Class distribution after Sonnet labeling:**
+- Routine: 59% — most clinical notes describe stable or scheduled care
+- Urgent: 31% — timely intervention needed
+- Emergency: 10% — acute, life-threatening
+
+This distribution is realistic but imbalanced, which required class weights in
+training (see Step 4).
 
 **Split:** 70/15/15 stratified. Stratification ensures each split has the same class
 proportions, which is critical for reliable evaluation on imbalanced datasets.
 
 ---
 
-## Step 4: Training (trainer.py)
+## Step 4: Training (trainer.py + notebooks/train_colab.ipynb)
 
-**What it does:** Fine-tunes DistilBERT with PEFT/LoRA, logs to MLflow, saves
-checkpoints to S3, registers final model.
+**What it does:** Fine-tunes DistilBERT with PEFT/LoRA on a Colab T4 GPU, logs to
+MLflow, saves model to S3.
 
 **Why DistilBERT?**
 - 67M parameters (vs BERT's 110M) — 40% smaller
@@ -92,15 +101,22 @@ checkpoints to S3, registers final model.
 - Target modules: `q_lin`, `v_lin` — DistilBERT's attention query and value projections.
   These are the most impactful layers for classification tasks.
 
+**Class-weighted loss (WeightedTrainer):**
+With only 10% Emergency examples, the model initially defaulted to predicting Routine
+for everything (which gives ~59% accuracy for free). `WeightedTrainer` subclasses
+HuggingFace's `Trainer` and applies inverse-frequency class weights to the cross-entropy
+loss. This penalizes mistakes on Emergency 6x more than Routine, forcing the model to
+actually learn the minority class patterns.
+
 **Training loop:**
 HuggingFace `Trainer` handles the training loop, gradient accumulation, mixed precision
 (fp16 on GPU), and evaluation. We evaluate after every epoch and keep the best model
 by F1 score.
 
-**MLflow integration:**
-- Hyperparams logged at start
-- Metrics logged per epoch (automatic via Trainer callbacks)
-- Final model registered to MLflow Model Registry
+**Two Colab notebooks:**
+- `train_colab.ipynb` — manual CSV upload/download
+- `train_colab_s3.ipynb` — pulls data from S3, uploads model to S3 (AWS credentials
+  entered via `getpass`, not saved to notebook)
 
 ---
 
@@ -109,23 +125,27 @@ by F1 score.
 **What it does:** Three-way comparison on held-out test set.
 
 **Three classifiers:**
-1. **Baseline** — vanilla DistilBERT with a random classification head. This shows
-   what you get without any fine-tuning. Expected: near-random performance (33% accuracy
-   on 3 classes).
-2. **Fine-tuned** — our LoRA model. Expected: 70-90% accuracy depending on data quality.
-3. **Claude Haiku** — LLM-based classification via structured output. Expected: 60-80%
-   accuracy. Good but expensive and slow.
+1. **Baseline** — vanilla DistilBERT with a randomly initialized classification head.
+   Scores ~31% accuracy — confirms it's guessing randomly across 3 classes.
+2. **Fine-tuned** — our LoRA model. 74% accuracy, 0.68 F1.
+3. **Claude Haiku** — LLM-based classification via structured output. 78% accuracy,
+   0.72 F1. Better accuracy but ~19x slower and ~$0.25/1K calls.
 
-**Metrics:**
-- Accuracy and macro F1 (accounts for class imbalance)
-- Per-class precision and recall (which urgency levels does each model get wrong?)
-- Average latency in milliseconds
-- Cost per 1000 classifications (fine-tuned = $0, Claude = ~$0.18)
+**Actual results:**
+```
+Model             Accuracy   F1 (macro)   Latency (ms)    Cost/1K
+-----------------------------------------------------------------
+baseline            0.31       0.16           64ms        $0.00
+finetuned           0.74       0.68           70ms        $0.00
+claude (haiku)      0.78       0.72         1420ms        $0.25
+```
 
 **Why this comparison matters for interviews:**
-It demonstrates that fine-tuning a small model can match or beat an expensive LLM API
-for specific, narrow classification tasks. This is exactly the kind of cost/performance
-tradeoff that production ML teams care about.
+The fine-tuned model is within 4 points of Claude Haiku at zero marginal cost and
+19x faster latency. For a narrow, well-defined classification task, fine-tuning
+a small model is the right production choice. The intake router currently uses
+Sonnet (~$3/1K calls) for classification — this model could replace it as a
+drop-in swap.
 
 ---
 
@@ -136,7 +156,7 @@ tradeoff that production ML teams care about.
 **Model loading priority:**
 1. Explicit local path (for development)
 2. MLflow Model Registry (for production)
-3. Error (no silent fallback to untrained model)
+3. Claude fallback (if no trained model available)
 
 **Claude fallback:**
 If the fine-tuned model isn't available (e.g., first deployment before training),
@@ -181,20 +201,26 @@ accepts raw text). Output sanitization strips any HTML that might have leaked th
 
 ## Key Interview Talking Points
 
-1. **"Why not just use Claude?"** — Fine-tuned model is ~100x cheaper and ~30x faster
+1. **"Why not just use Claude?"** — Fine-tuned model is ~100x cheaper and ~19x faster
    for this specific task. Claude is better for general-purpose reasoning, but narrow
-   classification doesn't need it.
+   classification doesn't need it. This is knowledge distillation — teach a small model
+   to replicate the large model's decisions.
 
 2. **"How does LoRA work?"** — Instead of updating all 67M parameters, LoRA adds small
    low-rank matrices (~300K params) to the attention layers. These capture task-specific
    patterns without forgetting pre-trained knowledge. Like adding a thin adapter layer
    on top of a frozen foundation.
 
-3. **"How would you deploy this?"** — Model artifact in S3, loaded by a FastAPI endpoint
+3. **"What was the biggest improvement?"** — Fixing the labels. Switching from
+   specialty-based mapping to Sonnet content-based labeling improved accuracy from
+   58% to 74%. No model or hyperparameter changes. Data quality was the bottleneck.
+
+4. **"How would you deploy this?"** — Model artifact in S3, loaded by a FastAPI endpoint
    behind an ALB. MLflow Registry tracks which version is production. Langfuse monitors
    inference quality. Canary deployment: route 5% of traffic to the model, compare
    against Claude on the remaining 95%, promote when F1 matches.
 
-4. **"What would you change for production?"** — Expert-annotated labels instead of
-   specialty mapping. Calibrated confidence scores. A/B testing framework. HIPAA-compliant
+5. **"What would you change for production?"** — Clinician-annotated labels instead of
+   LLM labeling. Hyperparameter search via Optuna. Bio_ClinicalBERT as an alternative
+   base model. Calibrated confidence scores. A/B testing framework. HIPAA-compliant
    infrastructure. Drift detection on input distribution.

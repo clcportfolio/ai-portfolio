@@ -206,9 +206,16 @@ st.markdown(
 # Sample texts
 SAMPLES = {
     "Emergency — Chest pain": (
-        "Patient presents to the emergency department with acute onset chest pain "
-        "radiating to the left arm. Diaphoretic, BP 180/110, HR 120. ECG shows "
-        "ST elevation in leads II, III, aVF."
+        "The patient is a 58-year-old male who presented to the emergency department "
+        "via ambulance with crushing substernal chest pain that began approximately "
+        "one hour prior to arrival. The pain radiates to the left arm and jaw. He is "
+        "diaphoretic and appears in acute distress. Vital signs reveal blood pressure "
+        "of 180/110, heart rate 120 and irregular, respiratory rate 24, oxygen "
+        "saturation 91% on room air. A 12-lead ECG was obtained immediately and "
+        "demonstrates ST segment elevation in leads II, III, and aVF consistent with "
+        "an acute inferior myocardial infarction. The patient was started on aspirin, "
+        "nitroglycerin, and a heparin drip. Cardiology was emergently consulted and "
+        "the patient is being prepared for emergent cardiac catheterization."
     ),
     "Routine — Annual wellness": (
         "45-year-old female presents for annual wellness exam. No acute complaints. "
