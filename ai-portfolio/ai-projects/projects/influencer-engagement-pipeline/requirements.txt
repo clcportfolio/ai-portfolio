@@ -1,0 +1,33 @@
+# Core
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# Spark + Delta Lake
+pyspark>=3.5.0,<3.6.0
+delta-spark>=3.1.0,<3.2.0
+
+# ML
+xgboost>=2.0.0
+scikit-learn>=1.4.0
+shap>=0.44.0
+
+# Experiment tracking
+mlflow>=2.13.0
+
+# Drift monitoring
+evidently>=0.4.0,<1.0
+
+# Orchestration
+apache-airflow>=2.8.0
+
+# Streamlit dashboard
+streamlit>=1.35.0
+
+# Visualization
+plotly>=5.18.0
+matplotlib>=3.8.0
+
+# Dataset download
+opendatasets>=0.1.22

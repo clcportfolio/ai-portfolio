@@ -1,0 +1,24 @@
+# Data — downloaded/generated locally, not committed
+data/
+
+# Airflow home
+airflow_home/
+
+# MLflow local runs
+mlruns/
+mlartifacts/
+*.db
+
+# Standard Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Spark
+spark-warehouse/
+derby.log
+metastore_db/
+
+# OS
+.DS_Store
