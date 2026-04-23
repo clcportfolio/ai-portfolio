@@ -1,0 +1,24 @@
+{
+  "alert_status": "warning",
+  "severity": "WARNING",
+  "dataset_drift": false,
+  "drifted_feature_count": 8,
+  "drifted_features": [
+    "account_age_days",
+    "comments",
+    "content_length",
+    "following_count",
+    "likes",
+    "shares",
+    "has_media",
+    "is_verified"
+  ],
+  "critical_features": [],
+  "recommended_action": "Multiple features drifted (8). Schedule retraining within 1 week.",
+  "timestamp": "2026-04-13T04:47:55.118254+00:00",
+  "thresholds": {
+    "psi_warn": 0.1,
+    "psi_moderate": 0.2,
+    "psi_severe": 0.25
+  }
+}
