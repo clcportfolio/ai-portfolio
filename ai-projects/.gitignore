@@ -32,3 +32,37 @@ build/
 
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json
+
+# ML experiment tracking (MLflow)
+**/mlruns/
+**/mlflow.db
+**/mlflow.db-wal
+**/mlflow.db-shm
+**/mlflow.db-journal
+
+# ML runtime outputs: trained models, experiment artifacts, SHAP, drift reports
+# If you want a small reproducible sample committed, put it under data/samples/
+**/data/mlflow/
+**/data/model/
+**/data/shap/
+**/data/drift/
+**/data/raw/
+**/model_artifacts/
+
+# Model binary formats (sklearn, xgboost, pytorch, keras, onnx)
+*.pkl
+*.joblib
+*.ubj
+*.h5
+*.pt
+*.pth
+*.onnx
+
+# SQLite databases (runtime state)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Airflow local runtime (also in individual projects, but belt-and-suspenders)
+**/airflow_home/
