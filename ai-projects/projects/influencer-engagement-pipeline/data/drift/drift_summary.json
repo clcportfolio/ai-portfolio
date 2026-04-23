@@ -1,0 +1,78 @@
+{
+  "dataset_drift": false,
+  "total_features_checked": 10,
+  "drifted_features_count": 8,
+  "drifted_features": [
+    "account_age_days",
+    "comments",
+    "content_length",
+    "following_count",
+    "likes",
+    "shares",
+    "has_media",
+    "is_verified"
+  ],
+  "critical_features": [],
+  "per_feature": {
+    "account_age_days": {
+      "drift_score": 0.014861,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "comments": {
+      "drift_score": 0.015088,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "content_length": {
+      "drift_score": 0.011928,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "followers_count": {
+      "drift_score": 0.83334,
+      "is_drifted": false,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "ok"
+    },
+    "following_count": {
+      "drift_score": 0.028403,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "likes": {
+      "drift_score": 0.018173,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "shares": {
+      "drift_score": 0.012894,
+      "is_drifted": true,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "slight"
+    },
+    "user_age": {
+      "drift_score": 0.250379,
+      "is_drifted": false,
+      "stat_test": "Wasserstein distance (normed)",
+      "severity": "ok"
+    },
+    "has_media": {
+      "drift_score": 0.004759,
+      "is_drifted": true,
+      "stat_test": "Jensen-Shannon distance",
+      "severity": "warning"
+    },
+    "is_verified": {
+      "drift_score": 0.007912,
+      "is_drifted": true,
+      "stat_test": "Jensen-Shannon distance",
+      "severity": "warning"
+    }
+  }
+}

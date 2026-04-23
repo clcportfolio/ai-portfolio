@@ -1,0 +1,22 @@
+# Core LangChain stack
+langchain>=0.3.0
+langchain-anthropic>=0.3.0
+langchain-community>=0.3.0
+langchain-huggingface>=0.1.0
+langchain-chroma>=0.1.0
+
+# LLM providers
+anthropic>=0.40.0
+
+# Observability
+langfuse>=2.0.0
+
+# Embeddings (local, no API key needed)
+sentence-transformers>=3.0.0
+
+# Pydantic + env
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Streamlit (for project app.py files)
+streamlit>=1.35.0

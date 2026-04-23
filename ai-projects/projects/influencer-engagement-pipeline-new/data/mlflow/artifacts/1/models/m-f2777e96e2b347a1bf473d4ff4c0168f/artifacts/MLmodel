@@ -1,0 +1,23 @@
+artifact_path: /Users/clculver/Documents/repos/ai-portfolio/ai-projects/projects/influencer-engagement-pipeline/data/mlflow/artifacts/1/models/m-f2777e96e2b347a1bf473d4ff4c0168f/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.13
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.11.1
+model_id: m-f2777e96e2b347a1bf473d4ff4c0168f
+model_size_bytes: 41624516
+model_uuid: m-f2777e96e2b347a1bf473d4ff4c0168f
+prompts: null
+run_id: 65bacd7b42234d55a5ad2a1c209a5174
+utc_time_created: '2026-04-13 15:20:56.736898'

@@ -1,2 +1,0 @@
-numpy>=1.26.0
-Pillow>=10.0.0       # 10+ for AVIF read/write support (requires libavif on the system)

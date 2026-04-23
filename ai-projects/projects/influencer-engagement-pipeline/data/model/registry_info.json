@@ -1,0 +1,7 @@
+{
+  "registered_model_name": "influencer-engagement-classifier",
+  "version": "2",
+  "run_id": "ace162c4c7cd4fe89355a4fb631d191e",
+  "model_type": "lightgbm",
+  "promotion_status": "None (promote manually via MLflow UI or CLI)"
+}
